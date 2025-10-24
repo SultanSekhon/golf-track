@@ -731,7 +731,7 @@ function openSettings(){
   // register service worker
   if('serviceWorker' in navigator){
     try{
-      await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.register('./sw.js');
       console.log('sw registered');
     }catch(e){
       console.warn('sw register failed',e);
@@ -744,3 +744,4 @@ function openSettings(){
   await renderRoundsList();
   renderActiveRound();
 })();
+
