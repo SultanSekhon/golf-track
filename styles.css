@@ -140,6 +140,7 @@
     box-shadow: 0 -4px 18px rgba(10,10,20,0.06);
     justify-content: space-around;
     backdrop-filter: blur(8px);
+    z-index: 500;
   }
   .navBtn {
     flex: 1;
@@ -161,7 +162,14 @@
     align-items: flex-end;
     padding: 16px;
     backdrop-filter: blur(0px);
+    z-index: 1000;
   }
+
+  .overlay.hidden {
+      display: none !important;
+      pointer-events: none;
+  }
+
   .form {
     width: 100%;
     background: var(--card);
@@ -233,5 +241,6 @@
   }
 
   
+
 
 
