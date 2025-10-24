@@ -1,7 +1,6 @@
-/* GolfTrack PWA - app.js (UPDATED)
-   - Edit shot support (edit/delete)
-   - Tee-shot quick guide (no lie asked on tee; lie stored as "Tee")
-   - Minor UI streamline for current-hole view
+/* GolfTrack PWA - app.js (UPDATED: Local course opens in compact current-hole view by default)
+   - new round.viewMode: 'current' or 'all'
+   - toggle button in active header to switch views
 */
 
 const DB_NAME = 'golftrack-db-v1';
@@ -54,7 +53,7 @@ async function deleteRound(id){
 // default config (stored in localStorage)
 const DEFAULTS = {
   clubs: ['Driver','3-wood','5-wood','3-iron','4-iron','5-iron','6-iron','7-iron','8-iron','9-iron','PW','GW','SW','LW','Putter'],
-  lies: ['Fairway','Rough','Deep Rough','Bunker','Green','Fringe','Woods','Hazard','Tee','Other'],
+  lies: ['Fairway','Rough','Deep Rough','Bunker','Green','Fringe','Woods','Hazard','Other'],
   strokes: ['Full','Pitch','Chip','Bunker','Putt'],
   outcomes: ['Good','Thin','Fat','Topped','Chunk','Hook','Slice','Push','Pull','Shank','Skull','Bladed','Duff','Other'],
   slopes: ['Flat','Uphill','Downhill','Ball Above Feet','Ball Below Feet','Tight Lie','Plugged','Other'],
@@ -91,17 +90,21 @@ let CURRENT_ROUND = null;
 const LOCAL_COURSE = {
   name: 'Local Course',
   pars: [
-    4,3,4,3,5,4,5,4,4,
-    4,4,5,3,4,5,4,3,4
+    4,3,4,3,5,4,5,4,4,  // holes 1-9
+    4,4,5,3,4,5,4,3,4   // holes 10-18
   ]
 };
 
-// format helpers
+// format date/time
+function ymd(d){
+  const dt = new Date(d);
+  return dt.toISOString().slice(0,10);
+}
 function timeShort(iso){
   return new Date(iso).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
 }
 
-// --- active hole helpers ---
+// Helpers for active hole
 function getActiveHole(round){
   if(!round) return null;
   if(!Array.isArray(round.holes) || round.holes.length === 0) return null;
@@ -124,6 +127,8 @@ function computeHoleStrokes(hole){
   const strokes = totalShotEntries + extraPutts - puttShots;
   return Math.max(strokes, totalShotEntries);
 }
+
+// compute hole result string relative to par
 function holeResult(hole){
   const strokes = computeHoleStrokes(hole);
   const par = hole.par || 0;
@@ -135,14 +140,21 @@ function holeResult(hole){
   if(diff < -1) return `${diff}`;
   return `+${diff}`;
 }
+
+// compute round totals
 function computeRoundTotals(round){
   const holes = round.holes || [];
-  let totalPar = 0, totalStrokes = 0;
-  holes.forEach(h=>{ totalPar += (h.par||0); totalStrokes += computeHoleStrokes(h); });
-  return { totalPar, totalStrokes, diff: totalStrokes - totalPar };
+  let totalPar = 0;
+  let totalStrokes = 0;
+  holes.forEach(h=>{
+    totalPar += (h.par || 0);
+    totalStrokes += computeHoleStrokes(h);
+  });
+  const diff = totalStrokes - totalPar;
+  return { totalPar, totalStrokes, diff };
 }
 
-// inject local course button
+// --- UI: inject 'Use Local Course' button beside Start Round ---
 function injectLocalCourseButton(){
   try{
     const createCard = document.querySelector('.create-round .row.gap') || document.querySelector('.create-round .row');
@@ -158,9 +170,10 @@ function injectLocalCourseButton(){
   }catch(e){}
 }
 
-// create local course round (compact view)
+// create round pre-filled with LOCAL_COURSE (compact view by default)
 async function createLocalCourseRound(){
-  const r = { id: uid(), date: new Date().toISOString().slice(0,10), course: LOCAL_COURSE.name, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0, viewMode:'current' };
+  const courseName = LOCAL_COURSE.name;
+  const r = { id: uid(), date: new Date().toISOString().slice(0,10), course: courseName, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0, viewMode:'current' };
   for(let i=0;i<LOCAL_COURSE.pars.length;i++){
     r.holes.push({ id: uid(), number: i+1, par: LOCAL_COURSE.pars[i], shots: [], putts: 0 });
   }
@@ -170,7 +183,7 @@ async function createLocalCourseRound(){
   renderRoundsList();
 }
 
-// create manual round
+// create / start round (manual)
 $('createRound').addEventListener('click', async ()=>{
   const course = $('course').value.trim() || 'Unknown';
   const date = $('roundDate').value || new Date().toISOString().slice(0,10);
@@ -182,9 +195,12 @@ $('createRound').addEventListener('click', async ()=>{
   renderRoundsList();
 });
 
-// listeners
+// quick log overlay
 $('quickLogBtn').addEventListener('click', ()=> openQuickLog(CURRENT_ROUND));
+$('navRounds').addEventListener('click', ()=> { /* keep default main view (rounds) */ });
 $('navSettings').addEventListener('click', ()=> openSettings());
+
+// end round
 $('endRoundBtn').addEventListener('click', async ()=>{
   if(!CURRENT_ROUND) return;
   if(!confirm('End round and save?')) return;
@@ -192,9 +208,13 @@ $('endRoundBtn').addEventListener('click', async ()=>{
   renderActiveRound();
   renderRoundsList();
 });
+
+// add hole (only up to 18)
 $('addHoleBtn').addEventListener('click', async ()=>{
   if(!CURRENT_ROUND) return;
-  if((CURRENT_ROUND.holes||[]).length >= 18) return alert('Maximum 18 holes reached.');
+  if((CURRENT_ROUND.holes||[]).length >= 18){
+    return alert('Maximum 18 holes reached.');
+  }
   const holeNumber = (CURRENT_ROUND.holes.length || 0) + 1;
   CURRENT_ROUND.holes.push({ id: uid(), number: holeNumber, par:4, shots:[], putts:0 });
   setActiveHoleIndex(CURRENT_ROUND, CURRENT_ROUND.holes.length - 1);
@@ -203,20 +223,20 @@ $('addHoleBtn').addEventListener('click', async ()=>{
   renderActiveRound();
 });
 
-// export CSV
+// export CSV (includes par & strokes & currentHole)
 $('exportBtn').addEventListener('click', async ()=>{
   const rounds = await loadAllRounds();
   if(!rounds.length){ alert('No rounds to export'); return; }
-  const rows = [['round_id','date','course','hole','par','shot_id','club','stroke','lie','slope','outcome','notes','timestamp','strokes','putts']];
+  const rows = [['round_id','date','course','hole','par','shot_id','club','stroke','lie','slope','outcome','notes','timestamp','strokes','putts','currentHoleIndex','viewMode']];
   rounds.forEach(r=>{
     r.holes.forEach(h=>{
       const strokes = computeHoleStrokes(h);
       if(h.shots && h.shots.length){
         h.shots.forEach(s=>{
-          rows.push([r.id, r.date, r.course, h.number, h.par || '', s.id, s.club, s.strokeType, s.lie || '', s.slope || '', s.outcome, (s.notes||''), s.ts, strokes, h.putts||0]);
+          rows.push([r.id, r.date, r.course, h.number, h.par || '', s.id, s.club, s.strokeType, s.lie || '', s.slope || '', s.outcome, (s.notes||''), s.ts, strokes, h.putts||0, r.currentHole||0, r.viewMode||'all']);
         });
       } else {
-        rows.push([r.id, r.date, r.course, h.number, h.par || '', '', '', '', '', '', '', '', '', strokes, h.putts||0]);
+        rows.push([r.id, r.date, r.course, h.number, h.par || '', '', '', '', '', '', '', '', '', strokes, h.putts||0, r.currentHole||0, r.viewMode||'all']);
       }
     });
   });
@@ -228,15 +248,17 @@ $('exportBtn').addEventListener('click', async ()=>{
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-// render rounds list
+// --- render rounds list (main) ---
 async function renderRoundsList(){
   const rounds = (await loadAllRounds()).sort((a,b)=>b.date.localeCompare(a.date));
   const existing = document.querySelector('#roundsListRoot');
   if(existing) existing.remove();
+
   const listRoot = document.createElement('div');
   listRoot.style.maxWidth = '720px';
   listRoot.style.margin = '0 auto';
   listRoot.id = 'roundsListRoot';
+
   rounds.forEach(r=>{
     const totals = computeRoundTotals(r);
     const el = document.createElement('div');
@@ -255,8 +277,11 @@ async function renderRoundsList(){
     </div>`;
     listRoot.appendChild(el);
   });
+
   const createCard = document.querySelector('.create-round');
   createCard.insertAdjacentElement('afterend', listRoot);
+
+  // attach handlers
   listRoot.querySelectorAll('button[data-action="open"]').forEach(b=>{
     b.onclick = async (ev)=> {
       const id = ev.target.getAttribute('data-id');
@@ -276,13 +301,16 @@ async function renderRoundsList(){
       renderRoundsList();
     };
   });
+
+  // auto-open latest round if none active
   if(!CURRENT_ROUND && rounds.length) {
     CURRENT_ROUND = rounds[0];
     renderActiveRound();
   }
 }
 
-// render active round (respects viewMode)
+// render active round UI (with per-hole scoring + navigation)
+// now respects round.viewMode: 'current' -> shows only active hole; 'all' -> shows full holes grid
 function renderActiveRound(){
   if(!CURRENT_ROUND){
     activeRoundSection.classList.add('hidden');
@@ -292,14 +320,26 @@ function renderActiveRound(){
   if(typeof CURRENT_ROUND.currentHole !== 'number') CURRENT_ROUND.currentHole = 0;
   if(!CURRENT_ROUND.viewMode) CURRENT_ROUND.viewMode = 'all';
   const activeHole = getActiveHole(CURRENT_ROUND);
+  const lastHoleNumber = activeHole ? activeHole.number : 1;
   const totals = computeRoundTotals(CURRENT_ROUND);
-  roundTitle.textContent = `${CURRENT_ROUND.course} • Hole ${activeHole ? activeHole.number : 1}`;
+  roundTitle.textContent = `${CURRENT_ROUND.course} • Hole ${lastHoleNumber}`;
+
+  // header meta + view toggle
   const viewToggleText = (CURRENT_ROUND.viewMode === 'current') ? 'Show all holes' : 'Show current hole';
-  roundMeta.innerHTML = `Date ${CURRENT_ROUND.date} • Holes ${CURRENT_ROUND.holes.length} • Total ${totals.totalStrokes} (Par ${totals.totalPar}) <div style="margin-top:6px"><button id="toggleViewBtn" class="btn" style="padding:8px;font-size:13px">${viewToggleText}</button></div>`;
+  roundMeta.innerHTML = `Date ${CURRENT_ROUND.date} • ${CURRENT_ROUND.holes.length} hole(s) • Total: ${totals.totalStrokes} (Par ${totals.totalPar}) • ${totals.diff>0? '+'+totals.diff : (totals.diff<0? totals.diff : 'E')}
+    <div style="margin-top:6px"><button id="toggleViewBtn" class="btn" style="padding:8px;font-size:13px">${viewToggleText}</button></div>`;
+
+  // attach toggle handler (delegated after DOM insertion)
   setTimeout(()=> {
     const tbtn = document.getElementById('toggleViewBtn');
-    if(tbtn) tbtn.onclick = async ()=> { CURRENT_ROUND.viewMode = (CURRENT_ROUND.viewMode === 'current') ? 'all' : 'current'; await saveRound(CURRENT_ROUND); renderActiveRound(); };
+    if(tbtn) tbtn.onclick = async ()=>{
+      CURRENT_ROUND.viewMode = (CURRENT_ROUND.viewMode === 'current') ? 'all' : 'current';
+      await saveRound(CURRENT_ROUND);
+      renderActiveRound();
+    };
   }, 0);
+
+  // favorites
   quickFavorites.innerHTML = '';
   (CFG.favorites || []).forEach(f=>{
     const b = document.createElement('button');
@@ -309,17 +349,38 @@ function renderActiveRound(){
     quickFavorites.appendChild(b);
   });
 
+  // recent shots + holes summary
   recentShots.innerHTML = '';
 
-  // nav controls
-  const navDiv = document.createElement('div'); navDiv.className = 'row gap';
-  const prevBtn = document.createElement('button'); prevBtn.className='btn'; prevBtn.textContent='◀ Prev'; prevBtn.onclick = async ()=>{ setActiveHoleIndex(CURRENT_ROUND, (CURRENT_ROUND.currentHole||0)-1); await saveRound(CURRENT_ROUND); renderActiveRound(); };
-  const nextBtn = document.createElement('button'); nextBtn.className='btn'; nextBtn.textContent='Next ▶'; nextBtn.onclick = async ()=>{ setActiveHoleIndex(CURRENT_ROUND, (CURRENT_ROUND.currentHole||0)+1); await saveRound(CURRENT_ROUND); renderActiveRound(); };
-  const jumpInfo = document.createElement('div'); jumpInfo.className='muted small'; jumpInfo.style.marginLeft='8px'; jumpInfo.textContent = `Hole ${(CURRENT_ROUND.currentHole||0)+1} / ${CURRENT_ROUND.holes.length}`;
-  navDiv.appendChild(prevBtn); navDiv.appendChild(nextBtn); navDiv.appendChild(jumpInfo);
+  // hole nav controls
+  const navDiv = document.createElement('div');
+  navDiv.className = 'row gap';
+  const prevBtn = document.createElement('button');
+  prevBtn.className = 'btn';
+  prevBtn.textContent = '◀ Prev';
+  prevBtn.onclick = async ()=>{
+    setActiveHoleIndex(CURRENT_ROUND, (CURRENT_ROUND.currentHole || 0) - 1);
+    await saveRound(CURRENT_ROUND);
+    renderActiveRound();
+  };
+  const nextBtn = document.createElement('button');
+  nextBtn.className = 'btn';
+  nextBtn.textContent = 'Next ▶';
+  nextBtn.onclick = async ()=>{
+    setActiveHoleIndex(CURRENT_ROUND, (CURRENT_ROUND.currentHole || 0) + 1);
+    await saveRound(CURRENT_ROUND);
+    renderActiveRound();
+  };
+  const jumpInfo = document.createElement('div');
+  jumpInfo.className = 'muted small';
+  jumpInfo.style.marginLeft = '8px';
+  jumpInfo.textContent = `Hole ${ (CURRENT_ROUND.currentHole||0) + 1 } / ${CURRENT_ROUND.holes.length}`;
+  navDiv.appendChild(prevBtn);
+  navDiv.appendChild(nextBtn);
+  navDiv.appendChild(jumpInfo);
   recentShots.appendChild(navDiv);
 
-  // compact current-hole view
+  // if viewMode === 'current' show only the active hole card
   if(CURRENT_ROUND.viewMode === 'current'){
     const h = activeHole;
     const strokes = h ? computeHoleStrokes(h) : 0;
@@ -337,30 +398,41 @@ function renderActiveRound(){
     <div class="muted small" style="margin-top:8px">${(h.shots||[]).length} shots • Putts: ${h.putts||0}</div>
     <div style="margin-top:12px" class="row gap">
       <button class="btn" style="flex:1" onclick="openDetailedShotFormByIdSimple()">Add Shot</button>
-      <button class="btn" style="flex:1" onclick="openTeeShotFlow()">Tee Shot</button>
       <button class="btn" style="flex:1" onclick="advanceHoleAndSave()">Done & Next</button>
     </div>`;
     recentShots.appendChild(col);
 
-    window.openDetailedShotFormByIdSimple = function(){ openDetailedShotForm(CURRENT_ROUND, h); };
+    // attach simple helpers for these inline buttons
+    window.openDetailedShotFormByIdSimple = function(){
+      openDetailedShotForm(CURRENT_ROUND, h);
+    };
     window.advanceHoleAndSave = async function(){
+      // auto-advance to next hole (if available), otherwise stay
       const idx = CURRENT_ROUND.currentHole || 0;
-      if(idx < (CURRENT_ROUND.holes.length - 1)) setActiveHoleIndex(CURRENT_ROUND, idx + 1);
-      else alert('This is the last hole.');
-      await saveRound(CURRENT_ROUND);
+      if(idx < (CURRENT_ROUND.holes.length - 1)){
+        setActiveHoleIndex(CURRENT_ROUND, idx + 1);
+        await saveRound(CURRENT_ROUND);
+      } else {
+        // at last hole: keep as is and alert
+        alert('This is the last hole.');
+      }
       renderActiveRound();
     };
-
   } else {
-    // all-holes grid
-    const holesDiv = document.createElement('div'); holesDiv.style.display='grid'; holesDiv.style.gridTemplateColumns='repeat(3,1fr)'; holesDiv.style.gap='8px';
+    // viewMode === 'all' -> show full holes grid
+    const holesDiv = document.createElement('div');
+    holesDiv.style.display = 'grid';
+    holesDiv.style.gridTemplateColumns = 'repeat(3,1fr)';
+    holesDiv.style.gap = '8px';
     (CURRENT_ROUND.holes || []).forEach((h, idx)=>{
       const strokes = computeHoleStrokes(h);
       const res = holeResult(h);
       const col = document.createElement('div');
       col.className = 'shotItem';
       col.style.padding = '8px';
-      if(idx === (CURRENT_ROUND.currentHole || 0)) col.style.border = '2px solid var(--primary)';
+      if(idx === (CURRENT_ROUND.currentHole || 0)){
+        col.style.border = '2px solid var(--primary)';
+      }
       col.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
         <div><strong>Hole ${h.number}</strong> <div class="muted small">Par ${h.par||'-'}</div></div>
         <div style="text-align:right">
@@ -378,8 +450,9 @@ function renderActiveRound(){
   }
 
   // total summary
-  const totals = computeRoundTotals(CURRENT_ROUND);
-  const summary = document.createElement('div'); summary.className='card'; summary.style.marginTop='10px';
+  const summary = document.createElement('div');
+  summary.className = 'card';
+  summary.style.marginTop = '10px';
   summary.innerHTML = `<div class="row between">
     <div><strong>Round total</strong><div class="muted small">Holes: ${CURRENT_ROUND.holes.length}</div></div>
     <div style="text-align:right"><div style="font-weight:700;font-size:18px">${totals.totalStrokes}</div><div class="muted small">Par ${totals.totalPar} • ${totals.diff>0? '+'+totals.diff : (totals.diff<0? totals.diff : 'E')}</div></div>
@@ -387,7 +460,7 @@ function renderActiveRound(){
   recentShots.appendChild(summary);
 }
 
-// open detailed shot form by hole button
+// helper to open detailed shot form when clicked from hole button
 window.openDetailedShotFormById = function(btn){
   const rId = btn.getAttribute('data-r');
   const hId = btn.getAttribute('data-h');
@@ -409,80 +482,27 @@ window.openDetailedShotFormById = function(btn){
   }
 };
 
-// quickLog from favorite
+// quick log from favorite
 async function quickLogFromFavorite(fav){
   if(!CURRENT_ROUND) return alert('No active round. Start one first.');
   const hole = getActiveHole(CURRENT_ROUND);
   if(!hole) return alert('Active hole not found');
   const shot = {
-    id: uid(), club: fav.club, lie: fav.lie || '', slope: fav.slope || '', strokeType: fav.stroke || fav.strokeType || 'Full',
-    outcome: fav.outcome, notes: fav.notes||'', ts: new Date().toISOString()
+    id: uid(),
+    club: fav.club,
+    lie: fav.lie || '',
+    slope: fav.slope || '',
+    strokeType: fav.stroke || fav.strokeType || 'Full',
+    outcome: fav.outcome,
+    notes: fav.notes||'',
+    ts: new Date().toISOString()
   };
   hole.shots.push(shot);
   await saveRound(CURRENT_ROUND);
   renderActiveRound();
 }
 
-// --- Tee shot quick flow (no lie asked) ---
-function openTeeShotFlow(){
-  if(!CURRENT_ROUND) return alert('No active round.');
-  const hole = getActiveHole(CURRENT_ROUND);
-  if(!hole) return alert('Active hole not found.');
-  overlay.innerHTML = ''; overlay.classList.remove('hidden');
-  const form = document.createElement('div'); form.className='form';
-  // club suggestions based on par
-  const suggestedClubs = (hole.par >= 4) ? ['Driver','3-wood','5-wood','3-iron','4-iron'] : ['6-iron','7-iron','8-iron','9-iron','PW'];
-  form.innerHTML = `<h3>Tee Shot — Hole ${hole.number} (Par ${hole.par})</h3>
-    <div class="smallNote">Tee box: select club & outcome. Lie is automatically set to "Tee".</div>
-    <div style="height:8px"></div>
-    <div><label class="small">Suggested clubs</label><div id="teeClubGrid" class="pickerGrid"></div></div>
-    <div style="height:8px"></div>
-    <div><label class="small">Stroke</label><div id="teeStrokeGrid" class="pickerGrid"></div></div>
-    <div style="height:8px"></div>
-    <div><label class="small">Outcome</label><div id="teeOutGrid" class="pickerGrid"></div></div>
-    <div style="height:8px"></div>
-    <input id="teeNote" class="input" placeholder="Note (optional)" />
-    <div class="row gap" style="margin-top:10px">
-      <button id="saveTee" class="btn primary">Save Tee Shot</button>
-      <button id="cancelTee" class="btn">Cancel</button>
-    </div>`;
-  overlay.appendChild(form);
-
-  const cg = form.querySelector('#teeClubGrid');
-  suggestedClubs.forEach(c=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=c; b.onclick=()=>select('club',c,b); cg.appendChild(b); });
-  // includefull club list as fallback under suggestions
-  const fullRow = document.createElement('div'); fullRow.style.marginTop='8px'; fullRow.innerHTML = `<div class="smallNote">More clubs</div><div id="teeClubFull" class="pickerGrid"></div>`;
-  form.appendChild(fullRow);
-  const cgFull = form.querySelector('#teeClubFull');
-  CFG.clubs.forEach(c=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=c; b.onclick=()=>select('club',c,b); cgFull.appendChild(b); });
-
-  const sg = form.querySelector('#teeStrokeGrid');
-  CFG.strokes.forEach(s=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=s; b.onclick=()=>select('stroke',s,b); sg.appendChild(b); });
-
-  const og = form.querySelector('#teeOutGrid');
-  CFG.outcomes.forEach(o=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=o; b.onclick=()=>select('outcome',o,b); og.appendChild(b); });
-
-  const selection = { club:null, stroke:null, outcome:null };
-  function select(k,v,btn){
-    selection[k] = v;
-    let gid = '#teeClubGrid'; if(k==='stroke') gid = '#teeStrokeGrid'; else if(k==='outcome') gid = '#teeOutGrid';
-    document.querySelectorAll(gid + ' .pickerBtn').forEach(x=>x.classList.remove('sel'));
-    // also clear full grid selection if club chosen from full list
-    if(k==='club') { document.querySelectorAll('#teeClubFull .pickerBtn').forEach(x=>x.classList.remove('sel')); }
-    btn.classList.add('sel');
-  }
-
-  form.querySelector('#cancelTee').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
-  form.querySelector('#saveTee').onclick = async ()=>{
-    if(!selection.club || !selection.stroke || !selection.outcome) return alert('Select club, stroke and outcome first.');
-    const shot = { id: uid(), club: selection.club, strokeType: selection.stroke, lie: 'Tee', slope: '', outcome: selection.outcome, notes: form.querySelector('#teeNote').value||'', ts: new Date().toISOString() };
-    hole.shots.push(shot);
-    await saveRound(CURRENT_ROUND);
-    overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
-  };
-}
-
-// open quick log (full)
+// open quick log overlay
 function openQuickLog(round){
   if(!round) return alert('No active round. Start one first.');
   overlay.innerHTML = '';
@@ -493,15 +513,36 @@ function openQuickLog(round){
   form.innerHTML = `<h3>Quick Log — Hole ${activeHole ? activeHole.number : 1}</h3>
     <div class="smallNote">Tap club → stroke → outcome → lie → slope → Save</div>
     <div style="height:8px"></div>
-    <div><label class="small">Club</label><div id="clubGrid" class="pickerGrid"></div></div>
+
+    <div>
+      <label class="small">Club</label>
+      <div id="clubGrid" class="pickerGrid"></div>
+    </div>
     <div style="height:8px"></div>
-    <div><label class="small">Stroke</label><div id="strokeGrid" class="pickerGrid"></div></div>
+
+    <div>
+      <label class="small">Stroke</label>
+      <div id="strokeGrid" class="pickerGrid"></div>
+    </div>
     <div style="height:8px"></div>
-    <div><label class="small">Outcome</label><div id="outGrid" class="pickerGrid"></div></div>
+
+    <div>
+      <label class="small">Outcome</label>
+      <div id="outGrid" class="pickerGrid"></div>
+    </div>
     <div style="height:8px"></div>
-    <div><label class="small">Lie</label><div id="lieGrid" class="pickerGrid"></div></div>
+
+    <div>
+      <label class="small">Lie (where you hit)</label>
+      <div id="lieGrid" class="pickerGrid"></div>
+    </div>
     <div style="height:8px"></div>
-    <div><label class="small">Slope</label><div id="slopeGrid" class="pickerGrid"></div></div>
+
+    <div>
+      <label class="small">Slope / Lie type</label>
+      <div id="slopeGrid" class="pickerGrid"></div>
+    </div>
+
     <div style="height:8px"></div>
     <input id="noteInput" class="input" placeholder="Short note (e.g. tight lie, wind left)" />
     <div class="row gap" style="margin-top:10px">
@@ -510,18 +551,28 @@ function openQuickLog(round){
     </div>`;
   overlay.appendChild(form);
 
+  // build pickers
   const cg = form.querySelector('#clubGrid');
-  CFG.clubs.forEach(club=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=club; b.onclick=()=>selectPicker('club',club,b); cg.appendChild(b); });
+  CFG.clubs.forEach(club=>{
+    const b = document.createElement('button'); b.className='pickerBtn'; b.textContent = club; b.onclick = ()=> selectPicker('club',club,b);
+    cg.appendChild(b);
+  });
+
   const sg = form.querySelector('#strokeGrid');
   CFG.strokes.forEach(st=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=st; b.onclick=()=>selectPicker('stroke',st,b); sg.appendChild(b); });
+
   const og = form.querySelector('#outGrid');
   CFG.outcomes.forEach(o=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=o; b.onclick=()=>selectPicker('outcome',o,b); og.appendChild(b); });
+
   const lg = form.querySelector('#lieGrid');
   CFG.lies.forEach(l=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=l; b.onclick=()=>selectPicker('lie',l,b); lg.appendChild(b); });
+
   const slg = form.querySelector('#slopeGrid');
   CFG.slopes.forEach(s=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=s; b.onclick=()=>selectPicker('slope',s,b); slg.appendChild(b); });
 
-  const selection = { club:null, stroke:null, outcome:null, lie:null, slope:null };
+  // keep track of selections
+  const selection = { club: null, stroke: null, outcome: null, lie: null, slope: null };
+
   function selectPicker(type, value, btn){
     selection[type] = value;
     let gridId = '#clubGrid';
@@ -535,21 +586,33 @@ function openQuickLog(round){
 
   form.querySelector('#cancelShot').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
   form.querySelector('#saveShot').onclick = async ()=>{
-    if(!selection.club || !selection.stroke || !selection.outcome) return alert('Select club, stroke and outcome first.');
+    if(!selection.club || !selection.stroke || !selection.outcome){
+      return alert('Select club, stroke and outcome first (three taps).');
+    }
     const hole = getActiveHole(round);
     if(!hole) return alert('Active hole not found.');
-    const shot = { id: uid(), club: selection.club, strokeType: selection.stroke, lie: selection.lie || '', slope: selection.slope || '', outcome: selection.outcome, notes: form.querySelector('#noteInput').value||'', ts: new Date().toISOString() };
+    const shot = {
+      id: uid(),
+      club: selection.club,
+      strokeType: selection.stroke,
+      lie: selection.lie || '',
+      slope: selection.slope || '',
+      outcome: selection.outcome,
+      notes: form.querySelector('#noteInput').value||'',
+      ts: new Date().toISOString()
+    };
     hole.shots.push(shot);
     await saveRound(round);
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
 }
 
-// detailed shot form (create/edit)
-function openDetailedShotForm(round,hole, shotToEdit=null){
-  overlay.innerHTML = ''; overlay.classList.remove('hidden');
-  const form = document.createElement('div'); form.className='form';
-  form.innerHTML = `<h3>${shotToEdit ? 'Edit Shot' : 'Shot'} — Hole ${hole.number}</h3>
+// detailed shot form used by hole buttons (same as before)
+function openDetailedShotForm(round,hole){
+  overlay.innerHTML = '';
+  overlay.classList.remove('hidden');
+  const form = document.createElement('div'); form.className = 'form';
+  form.innerHTML = `<h3>Shot — Hole ${hole.number}</h3>
     <label class="small">Club <div id="dclub" class="pickerGrid"></div></label>
     <label class="small">Stroke <div id="dstroke" class="pickerGrid"></div></label>
     <label class="small">Lie <div id="dlie" class="pickerGrid"></div></label>
@@ -557,10 +620,9 @@ function openDetailedShotForm(round,hole, shotToEdit=null){
     <label class="small">Outcome <div id="dout" class="pickerGrid"></div></label>
     <input id="notes" class="input" placeholder="Notes (short)">
     <div class="row gap" style="margin-top:10px">
-      <button id="save" class="btn primary">${shotToEdit ? 'Save' : 'Save'}</button>
+      <button id="save" class="btn primary">Save</button>
       <button id="cancel" class="btn">Cancel</button>
       <button id="addPutt" class="btn">+Putt</button>
-      <button id="deleteShot" class="btn danger" style="display:none">Delete</button>
     </div>`;
   overlay.appendChild(form);
 
@@ -576,20 +638,6 @@ function openDetailedShotForm(round,hole, shotToEdit=null){
   CFG.outcomes.forEach(o=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=o; b.onclick=()=>select('outcome',o,b); dout.appendChild(b); });
 
   const selection = { club:null, stroke:null, lie:null, slope:null, outcome:null };
-  // if editing, pre-fill selections and show delete
-  if(shotToEdit){
-    form.querySelector('#notes').value = shotToEdit.notes || '';
-    // helper to mark pickers after they are created
-    setTimeout(()=> {
-      if(shotToEdit.club) document.querySelectorAll('#dclub .pickerBtn').forEach(x=>{ if(x.textContent===shotToEdit.club) x.classList.add('sel'), selection.club=shotToEdit.club; });
-      if(shotToEdit.strokeType) document.querySelectorAll('#dstroke .pickerBtn').forEach(x=>{ if(x.textContent===shotToEdit.strokeType) x.classList.add('sel'), selection.stroke=shotToEdit.strokeType; });
-      if(shotToEdit.lie) document.querySelectorAll('#dlie .pickerBtn').forEach(x=>{ if(x.textContent===shotToEdit.lie) x.classList.add('sel'), selection.lie=shotToEdit.lie; });
-      if(shotToEdit.slope) document.querySelectorAll('#dslope .pickerBtn').forEach(x=>{ if(x.textContent===shotToEdit.slope) x.classList.add('sel'), selection.slope=shotToEdit.slope; });
-      if(shotToEdit.outcome) document.querySelectorAll('#dout .pickerBtn').forEach(x=>{ if(x.textContent===shotToEdit.outcome) x.classList.add('sel'), selection.outcome=shotToEdit.outcome; });
-    }, 0);
-    form.querySelector('#deleteShot').style.display = 'inline-block';
-  }
-
   function select(k,v,btn){
     selection[k]=v;
     const gridId = btn.parentElement.id;
@@ -604,92 +652,72 @@ function openDetailedShotForm(round,hole, shotToEdit=null){
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
   form.querySelector('#save').onclick = async ()=>{
-    if(!selection.club || !selection.stroke || !selection.outcome) return alert('Select club, stroke and outcome first.');
-    const shot = { id: shotToEdit ? shotToEdit.id : uid(), club: selection.club, strokeType: selection.stroke, lie: selection.lie || '', slope: selection.slope || '', outcome: selection.outcome, notes: form.querySelector('#notes').value||'', ts: shotToEdit ? shotToEdit.ts : new Date().toISOString() };
-    if(shotToEdit){
-      // replace existing
-      const idx = hole.shots.findIndex(s=>s.id===shotToEdit.id);
-      if(idx>=0) hole.shots[idx] = shot;
-    } else {
-      hole.shots.push(shot);
+    if(!selection.club || !selection.stroke || !selection.outcome){
+      return alert('Select club, stroke and outcome first.');
     }
-    await saveRound(CURRENT_ROUND);
+    const shot = {
+      id: uid(),
+      club: selection.club,
+      strokeType: selection.stroke,
+      lie: selection.lie || '',
+      slope: selection.slope || '',
+      outcome: selection.outcome,
+      notes: form.querySelector('#notes').value || '',
+      ts: new Date().toISOString()
+    };
+    hole.shots.push(shot);
+    await saveRound(round);
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
-  form.querySelector('#deleteShot').onclick = async ()=>{
-    if(!shotToEdit) return;
-    if(!confirm('Delete this shot?')) return;
-    const idx = hole.shots.findIndex(s=>s.id===shotToEdit.id);
-    if(idx>=0) hole.shots.splice(idx,1);
-    await saveRound(CURRENT_ROUND);
+}
+
+// settings UI
+function openSettings(){
+  overlay.innerHTML = ''; overlay.classList.remove('hidden');
+  const cfg = getConfig();
+  const form = document.createElement('div'); form.className='form';
+  form.innerHTML = `<h3>Settings</h3>
+    <div class="smallNote">Edit your club list, lie list, slope list and favorites. Favorites appear on the main screen for one-tap logging.</div>
+    <div style="height:8px"></div>
+
+    <label class="small">Clubs (comma separated)</label>
+    <textarea id="clubsText" style="width:100%;min-height:60px;border-radius:10px;padding:8px">${cfg.clubs.join(', ')}</textarea>
+
+    <div style="height:8px"></div>
+    <label class="small">Lies (comma separated)</label>
+    <textarea id="liesText" style="width:100%;min-height:60px;border-radius:10px;padding:8px">${cfg.lies.join(', ')}</textarea>
+
+    <div style="height:8px"></div>
+    <label class="small">Slopes / Lie types (comma separated)</label>
+    <textarea id="slopesText" style="width:100%;min-height:60px;border-radius:10px;padding:8px">${cfg.slopes.join(', ')}</textarea>
+
+    <div style="height:8px"></div>
+    <label class="small">Favorites (one per line, format: label | club | outcome | lie | stroke )</label>
+    <textarea id="favText" style="width:100%;min-height:120px;border-radius:10px;padding:8px">${(cfg.favorites||[]).map(f=>`${f.label}|${f.club}|${f.outcome}|${f.lie||''}|${f.stroke||''}`).join('\n')}</textarea>
+
+    <div class="row gap" style="margin-top:10px">
+      <button id="saveCfg" class="btn primary">Save</button>
+      <button id="closeCfg" class="btn">Close</button>
+    </div>`;
+  overlay.appendChild(form);
+  form.querySelector('#closeCfg').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
+  form.querySelector('#saveCfg').onclick = ()=> {
+    const clubs = form.querySelector('#clubsText').value.split(',').map(s=>s.trim()).filter(Boolean);
+    const lies = form.querySelector('#liesText').value.split(',').map(s=>s.trim()).filter(Boolean);
+    const slopes = form.querySelector('#slopesText').value.split(',').map(s=>s.trim()).filter(Boolean);
+    const favLines = form.querySelector('#favText').value.split('\n').map(l=>l.trim()).filter(Boolean);
+    const favorites = favLines.map(line=>{
+      const parts = line.split('|').map(p=>p.trim());
+      return { label: parts[0]||`${parts[1]||''} ${parts[2]||''}`, club: parts[1]||'', outcome: parts[2]||'', lie: parts[3]||'', stroke: parts[4]||'' };
+    });
+    CFG.clubs = clubs.length? clubs : DEFAULTS.clubs;
+    CFG.lies = lies.length? lies : DEFAULTS.lies;
+    CFG.slopes = slopes.length? slopes : DEFAULTS.slopes;
+    CFG.favorites = favorites.length? favorites : DEFAULTS.favorites;
+    saveConfig(CFG);
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
 }
-
-// helper to open edit form for a specific shot
-function openEditForShot(hole, shot){
-  openDetailedShotForm(CURRENT_ROUND, hole, shot);
-}
-
-// modified renderActiveRound must show edit button next to each recent shot
-// (we already call renderActiveRound widely; update recentShots listing to include edit)
-//
-// To support that, we will intercept where shots are shown: show edit per-shot where relevant.
-// (The rest of the file above already uses renderActiveRound which will render shot lists in current/hole views.)
-// For holes list we will attach edit buttons by editing the parts below when rendering shots in build.
-
-// NOTE: previous functions that showed recent shots used only counts; now we will add per-shot display with Edit buttons
-// We'll re-render the current active hole's shot list within renderActiveRound: if active hole exists, show last 8 shots with edit.
-
-
-// Override renderActiveRound's recent-shot section enhancement by re-creating logic to add per-shot Edit buttons
-// To avoid repeating large code, we will add a small helper that, when called after renderActiveRound constructed the hole card,
-// finds the active hole and appends a detailed shots list with edit buttons.
-
-async function appendPerShotEditList(){
-  if(!CURRENT_ROUND) return;
-  const activeHole = getActiveHole(CURRENT_ROUND);
-  if(!activeHole) return;
-  // find recentShots container (we used it as the main container)
-  // remove any existing per-shot list
-  const existing = document.getElementById('perShotList');
-  if(existing) existing.remove();
-  // find where to insert: after the main hole card (first .shotItem in recentShots)
-  const container = recentShots;
-  const list = document.createElement('div');
-  list.id = 'perShotList';
-  list.style.marginTop = '8px';
-  list.innerHTML = `<div style="font-weight:700;margin-bottom:6px">Recent shots</div>`;
-  const shots = (activeHole.shots||[]).slice(-12).reverse();
-  shots.forEach(s=>{
-    const row = document.createElement('div');
-    row.className = 'shotItem';
-    row.style.display = 'flex';
-    row.style.justifyContent = 'space-between';
-    row.style.alignItems = 'center';
-    row.style.padding = '10px';
-    row.innerHTML = `<div><div><strong>${s.club}</strong> • ${s.strokeType} • ${s.outcome}</div><div class="muted small">${s.lie||''} ${s.slope? '• '+s.slope : ''} ${s.notes? ' • '+s.notes : ''}</div></div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        <button class="btn" style="padding:8px;font-size:13px">Edit</button>
-      </div>`;
-    // attach edit handler
-    row.querySelector('button').onclick = ()=> openEditForShot(activeHole, s);
-    list.appendChild(row);
-  });
-  container.appendChild(list);
-}
-
-// Wrap original renderActiveRound so we call appendPerShotEditList after it finishes building UI
-// We will patch by replacing renderActiveRound variable with a wrapper that calls original then appends per-shot list.
-// But since renderActiveRound is defined above, we'll simply call appendPerShotEditList at the end of renderActiveRound by injecting a small timer.
-// To ensure it's executed, we add a global hook to call it after DOM updates.
-
-const originalRenderActiveRound = renderActiveRound;
-renderActiveRound = function(){
-  originalRenderActiveRound();
-  // attach edit lists for the active hole after a short tick
-  setTimeout(()=> appendPerShotEditList(), 60);
-};
 
 // init
 (async function init(){
@@ -697,13 +725,22 @@ renderActiveRound = function(){
   const d = new Date().toISOString().slice(0,10);
   document.getElementById('roundDate').value = d;
 
+  // attach main listeners
   document.getElementById('menuBtn').onclick = ()=> openSettings();
 
+  // register service worker
   if('serviceWorker' in navigator){
-    try{ await navigator.serviceWorker.register('/sw.js'); console.log('sw registered'); }catch(e){ console.warn('sw register failed',e); }
+    try{
+      await navigator.serviceWorker.register('/sw.js');
+      console.log('sw registered');
+    }catch(e){
+      console.warn('sw register failed',e);
+    }
   }
 
+  // inject 'Use Local Course' button
   injectLocalCourseButton();
+
   await renderRoundsList();
   renderActiveRound();
 })();
