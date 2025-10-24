@@ -1,1 +1,1 @@
-Website: https://curious-paprenjak-88340f.netlify.app
+Website: https://sultansekhon.github.io/golf-track/
