@@ -1,4 +1,10 @@
-/* GolfTrack PWA - app.js (UPDATED: Local course + per-hole & round scoring) */
+/* GolfTrack PWA - app.js (FIXED)
+   - Adds round.currentHole index (0-based)
+   - Shots log to active hole via getActiveHole(round)
+   - Prev / Next hole navigation
+   - Add Hole limited to 18 holes
+   - Local course creates 18 holes and sets currentHole = 0
+*/
 
 const DB_NAME = 'golftrack-db-v1';
 const STORE = 'rounds';
@@ -101,15 +107,29 @@ function timeShort(iso){
   return new Date(iso).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
 }
 
+// Helpers for active hole
+function getActiveHole(round){
+  if(!round) return null;
+  if(!Array.isArray(round.holes) || round.holes.length === 0) return null;
+  const idx = (typeof round.currentHole === 'number') ? round.currentHole : 0;
+  // clamp
+  const safeIdx = Math.max(0, Math.min(round.holes.length - 1, idx));
+  // ensure currentHole stored
+  if(round.currentHole !== safeIdx) round.currentHole = safeIdx;
+  return round.holes[safeIdx];
+}
+function setActiveHoleIndex(round, idx){
+  if(!round) return;
+  round.currentHole = Math.max(0, Math.min((round.holes||[]).length - 1, idx));
+}
+
 // compute strokes for a hole:
-// strokes = total shot entries + extra putt increments - puttShotCount (avoid double counting)
 function computeHoleStrokes(hole){
   const shots = hole.shots || [];
   const totalShotEntries = shots.length;
   const puttShots = shots.filter(s => (s.strokeType||'').toLowerCase() === 'putt').length;
   const extraPutts = hole.putts || 0;
   const strokes = totalShotEntries + extraPutts - puttShots;
-  // if negative for some reason, clamp to totalShotEntries
   return Math.max(strokes, totalShotEntries);
 }
 
@@ -144,7 +164,6 @@ function injectLocalCourseButton(){
   try{
     const createCard = document.querySelector('.create-round .row.gap') || document.querySelector('.create-round .row');
     if(!createCard) return;
-    // don't add twice
     if(document.getElementById('useLocalCourseBtn')) return;
     const btn = document.createElement('button');
     btn.id = 'useLocalCourseBtn';
@@ -159,7 +178,7 @@ function injectLocalCourseButton(){
 // create round pre-filled with LOCAL_COURSE
 async function createLocalCourseRound(){
   const courseName = LOCAL_COURSE.name;
-  const r = { id: uid(), date: new Date().toISOString().slice(0,10), course: courseName, holes: [], notes:'', createdAt:new Date().toISOString() };
+  const r = { id: uid(), date: new Date().toISOString().slice(0,10), course: courseName, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0 };
   for(let i=0;i<LOCAL_COURSE.pars.length;i++){
     r.holes.push({ id: uid(), number: i+1, par: LOCAL_COURSE.pars[i], shots: [], putts: 0 });
   }
@@ -173,7 +192,7 @@ async function createLocalCourseRound(){
 $('createRound').addEventListener('click', async ()=>{
   const course = $('course').value.trim() || 'Unknown';
   const date = $('roundDate').value || new Date().toISOString().slice(0,10);
-  const r = { id: uid(), date, course, holes: [], notes:'', createdAt:new Date().toISOString() };
+  const r = { id: uid(), date, course, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0 };
   // add a default hole 1
   r.holes.push({ id: uid(), number:1, par:4, shots:[], putts:0 });
   await saveRound(r);
@@ -196,29 +215,34 @@ $('endRoundBtn').addEventListener('click', async ()=>{
   renderRoundsList();
 });
 
-// add hole
+// add hole (only up to 18)
 $('addHoleBtn').addEventListener('click', async ()=>{
   if(!CURRENT_ROUND) return;
+  if((CURRENT_ROUND.holes||[]).length >= 18){
+    return alert('Maximum 18 holes reached.');
+  }
   const holeNumber = (CURRENT_ROUND.holes.length || 0) + 1;
   CURRENT_ROUND.holes.push({ id: uid(), number: holeNumber, par:4, shots:[], putts:0 });
+  // set active hole to new hole
+  setActiveHoleIndex(CURRENT_ROUND, CURRENT_ROUND.holes.length - 1);
   await saveRound(CURRENT_ROUND);
   renderActiveRound();
 });
 
-// export CSV (includes par & strokes)
+// export CSV (includes par & strokes & currentHole)
 $('exportBtn').addEventListener('click', async ()=>{
   const rounds = await loadAllRounds();
   if(!rounds.length){ alert('No rounds to export'); return; }
-  const rows = [['round_id','date','course','hole','par','shot_id','club','stroke','lie','slope','outcome','notes','timestamp','strokes','putts']];
+  const rows = [['round_id','date','course','hole','par','shot_id','club','stroke','lie','slope','outcome','notes','timestamp','strokes','putts','currentHoleIndex']];
   rounds.forEach(r=>{
     r.holes.forEach(h=>{
       const strokes = computeHoleStrokes(h);
       if(h.shots && h.shots.length){
         h.shots.forEach(s=>{
-          rows.push([r.id, r.date, r.course, h.number, h.par || '', s.id, s.club, s.strokeType, s.lie || '', s.slope || '', s.outcome, (s.notes||''), s.ts, strokes, h.putts||0]);
+          rows.push([r.id, r.date, r.course, h.number, h.par || '', s.id, s.club, s.strokeType, s.lie || '', s.slope || '', s.outcome, (s.notes||''), s.ts, strokes, h.putts||0, r.currentHole||0]);
         });
       } else {
-        rows.push([r.id, r.date, r.course, h.number, h.par || '', '', '', '', '', '', '', '', '', strokes, h.putts||0]);
+        rows.push([r.id, r.date, r.course, h.number, h.par || '', '', '', '', '', '', '', '', '', strokes, h.putts||0, r.currentHole||0]);
       }
     });
   });
@@ -233,7 +257,6 @@ $('exportBtn').addEventListener('click', async ()=>{
 // --- render rounds list (main) ---
 async function renderRoundsList(){
   const rounds = (await loadAllRounds()).sort((a,b)=>b.date.localeCompare(a.date));
-  // Remove any previously inserted listing (to avoid doubling)
   const existing = document.querySelector('#roundsListRoot');
   if(existing) existing.remove();
 
@@ -292,14 +315,17 @@ async function renderRoundsList(){
   }
 }
 
-// render active round UI (with per-hole scoring)
+// render active round UI (with per-hole scoring + navigation)
 function renderActiveRound(){
   if(!CURRENT_ROUND){
     activeRoundSection.classList.add('hidden');
     return;
   }
   activeRoundSection.classList.remove('hidden');
-  const lastHoleNumber = (CURRENT_ROUND.holes && CURRENT_ROUND.holes.length)? CURRENT_ROUND.holes.slice(-1)[0].number : 1;
+  // ensure currentHole exists
+  if(typeof CURRENT_ROUND.currentHole !== 'number') CURRENT_ROUND.currentHole = 0;
+  const activeHole = getActiveHole(CURRENT_ROUND);
+  const lastHoleNumber = activeHole ? activeHole.number : 1;
   const totals = computeRoundTotals(CURRENT_ROUND);
   roundTitle.textContent = `${CURRENT_ROUND.course} • Hole ${lastHoleNumber}`;
   roundMeta.textContent = `Date ${CURRENT_ROUND.date} • ${CURRENT_ROUND.holes.length} hole(s) • Total: ${totals.totalStrokes} (Par ${totals.totalPar}) • ${totals.diff>0? '+'+totals.diff : (totals.diff<0? totals.diff : 'E')}`;
@@ -317,18 +343,49 @@ function renderActiveRound(){
   // recent shots + holes summary
   recentShots.innerHTML = '';
 
+  // hole nav controls
+  const navDiv = document.createElement('div');
+  navDiv.className = 'row gap';
+  const prevBtn = document.createElement('button');
+  prevBtn.className = 'btn';
+  prevBtn.textContent = '◀ Prev';
+  prevBtn.onclick = async ()=>{
+    setActiveHoleIndex(CURRENT_ROUND, (CURRENT_ROUND.currentHole || 0) - 1);
+    await saveRound(CURRENT_ROUND);
+    renderActiveRound();
+  };
+  const nextBtn = document.createElement('button');
+  nextBtn.className = 'btn';
+  nextBtn.textContent = 'Next ▶';
+  nextBtn.onclick = async ()=>{
+    setActiveHoleIndex(CURRENT_ROUND, (CURRENT_ROUND.currentHole || 0) + 1);
+    await saveRound(CURRENT_ROUND);
+    renderActiveRound();
+  };
+  const jumpInfo = document.createElement('div');
+  jumpInfo.className = 'muted small';
+  jumpInfo.style.marginLeft = '8px';
+  jumpInfo.textContent = `Hole ${ (CURRENT_ROUND.currentHole||0) + 1 } / ${CURRENT_ROUND.holes.length}`;
+  navDiv.appendChild(prevBtn);
+  navDiv.appendChild(nextBtn);
+  navDiv.appendChild(jumpInfo);
+  recentShots.appendChild(navDiv);
+
   // show holes as compact list with par & strokes & result
   const holesDiv = document.createElement('div');
   holesDiv.style.display = 'grid';
   holesDiv.style.gridTemplateColumns = 'repeat(3,1fr)';
   holesDiv.style.gap = '8px';
-
-  (CURRENT_ROUND.holes || []).forEach(h=>{
+  (CURRENT_ROUND.holes || []).forEach((h, idx)=>{
     const strokes = computeHoleStrokes(h);
     const res = holeResult(h);
     const col = document.createElement('div');
     col.className = 'shotItem';
     col.style.padding = '8px';
+    // highlight active hole
+    if(idx === (CURRENT_ROUND.currentHole || 0)){
+      col.style.border = '2px solid var(--primary)';
+    }
     col.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
       <div><strong>Hole ${h.number}</strong> <div class="muted small">Par ${h.par||'-'}</div></div>
       <div style="text-align:right">
@@ -345,7 +402,7 @@ function renderActiveRound(){
 
   recentShots.appendChild(holesDiv);
 
-  // also show a total summary item
+  // total summary
   const summary = document.createElement('div');
   summary.className = 'card';
   summary.style.marginTop = '10px';
@@ -361,16 +418,20 @@ window.openDetailedShotFormById = function(btn){
   const rId = btn.getAttribute('data-r');
   const hId = btn.getAttribute('data-h');
   if(!CURRENT_ROUND || CURRENT_ROUND.id !== rId){
-    // try to load the round
     loadAllRounds().then(rounds=>{
       const r = rounds.find(rr=>rr.id===rId);
       if(!r) return alert('Round not found');
       CURRENT_ROUND = r;
       const hole = r.holes.find(x=>x.id===hId);
+      // set the round's currentHole to this hole's index
+      const idx = r.holes.findIndex(x=>x.id===hId);
+      if(idx >= 0) r.currentHole = idx;
       openDetailedShotForm(r,hole);
     });
   } else {
     const hole = CURRENT_ROUND.holes.find(x=>x.id===hId);
+    const idx = CURRENT_ROUND.holes.findIndex(x=>x.id===hId);
+    if(idx >= 0) CURRENT_ROUND.currentHole = idx;
     openDetailedShotForm(CURRENT_ROUND,hole);
   }
 };
@@ -378,7 +439,8 @@ window.openDetailedShotFormById = function(btn){
 // quick log from favorite
 async function quickLogFromFavorite(fav){
   if(!CURRENT_ROUND) return alert('No active round. Start one first.');
-  const hole = CURRENT_ROUND.holes[CURRENT_ROUND.holes.length - 1];
+  const hole = getActiveHole(CURRENT_ROUND);
+  if(!hole) return alert('Active hole not found');
   const shot = {
     id: uid(),
     club: fav.club,
@@ -399,9 +461,10 @@ function openQuickLog(round){
   if(!round) return alert('No active round. Start one first.');
   overlay.innerHTML = '';
   overlay.classList.remove('hidden');
+  const activeHole = getActiveHole(round);
   const form = document.createElement('div');
   form.className = 'form';
-  form.innerHTML = `<h3>Quick Log — Hole ${round.holes.slice(-1)[0].number}</h3>
+  form.innerHTML = `<h3>Quick Log — Hole ${activeHole ? activeHole.number : 1}</h3>
     <div class="smallNote">Tap club → stroke → outcome → lie → slope → Save</div>
     <div style="height:8px"></div>
 
@@ -480,7 +543,8 @@ function openQuickLog(round){
     if(!selection.club || !selection.stroke || !selection.outcome){
       return alert('Select club, stroke and outcome first (three taps).');
     }
-    const hole = round.holes[round.holes.length - 1];
+    const hole = getActiveHole(round);
+    if(!hole) return alert('Active hole not found.');
     const shot = {
       id: uid(),
       club: selection.club,
