@@ -1,9 +1,6 @@
-/* GolfTrack PWA - app.js (FIXED)
-   - Adds round.currentHole index (0-based)
-   - Shots log to active hole via getActiveHole(round)
-   - Prev / Next hole navigation
-   - Add Hole limited to 18 holes
-   - Local course creates 18 holes and sets currentHole = 0
+/* GolfTrack PWA - app.js (UPDATED: Local course opens in compact current-hole view by default)
+   - new round.viewMode: 'current' or 'all'
+   - toggle button in active header to switch views
 */
 
 const DB_NAME = 'golftrack-db-v1';
@@ -112,9 +109,7 @@ function getActiveHole(round){
   if(!round) return null;
   if(!Array.isArray(round.holes) || round.holes.length === 0) return null;
   const idx = (typeof round.currentHole === 'number') ? round.currentHole : 0;
-  // clamp
   const safeIdx = Math.max(0, Math.min(round.holes.length - 1, idx));
-  // ensure currentHole stored
   if(round.currentHole !== safeIdx) round.currentHole = safeIdx;
   return round.holes[safeIdx];
 }
@@ -142,8 +137,8 @@ function holeResult(hole){
   if(diff === 0) return 'E';
   if(diff === -1) return '-1';
   if(diff === 1) return '+1';
-  if(diff < -1) return `${diff}`; // e.g. -2
-  return `+${diff}`; // e.g. +2
+  if(diff < -1) return `${diff}`;
+  return `+${diff}`;
 }
 
 // compute round totals
@@ -175,10 +170,10 @@ function injectLocalCourseButton(){
   }catch(e){}
 }
 
-// create round pre-filled with LOCAL_COURSE
+// create round pre-filled with LOCAL_COURSE (compact view by default)
 async function createLocalCourseRound(){
   const courseName = LOCAL_COURSE.name;
-  const r = { id: uid(), date: new Date().toISOString().slice(0,10), course: courseName, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0 };
+  const r = { id: uid(), date: new Date().toISOString().slice(0,10), course: courseName, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0, viewMode:'current' };
   for(let i=0;i<LOCAL_COURSE.pars.length;i++){
     r.holes.push({ id: uid(), number: i+1, par: LOCAL_COURSE.pars[i], shots: [], putts: 0 });
   }
@@ -192,8 +187,7 @@ async function createLocalCourseRound(){
 $('createRound').addEventListener('click', async ()=>{
   const course = $('course').value.trim() || 'Unknown';
   const date = $('roundDate').value || new Date().toISOString().slice(0,10);
-  const r = { id: uid(), date, course, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0 };
-  // add a default hole 1
+  const r = { id: uid(), date, course, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0, viewMode:'all' };
   r.holes.push({ id: uid(), number:1, par:4, shots:[], putts:0 });
   await saveRound(r);
   CURRENT_ROUND = r;
@@ -223,8 +217,8 @@ $('addHoleBtn').addEventListener('click', async ()=>{
   }
   const holeNumber = (CURRENT_ROUND.holes.length || 0) + 1;
   CURRENT_ROUND.holes.push({ id: uid(), number: holeNumber, par:4, shots:[], putts:0 });
-  // set active hole to new hole
   setActiveHoleIndex(CURRENT_ROUND, CURRENT_ROUND.holes.length - 1);
+  CURRENT_ROUND.viewMode = 'current';
   await saveRound(CURRENT_ROUND);
   renderActiveRound();
 });
@@ -233,16 +227,16 @@ $('addHoleBtn').addEventListener('click', async ()=>{
 $('exportBtn').addEventListener('click', async ()=>{
   const rounds = await loadAllRounds();
   if(!rounds.length){ alert('No rounds to export'); return; }
-  const rows = [['round_id','date','course','hole','par','shot_id','club','stroke','lie','slope','outcome','notes','timestamp','strokes','putts','currentHoleIndex']];
+  const rows = [['round_id','date','course','hole','par','shot_id','club','stroke','lie','slope','outcome','notes','timestamp','strokes','putts','currentHoleIndex','viewMode']];
   rounds.forEach(r=>{
     r.holes.forEach(h=>{
       const strokes = computeHoleStrokes(h);
       if(h.shots && h.shots.length){
         h.shots.forEach(s=>{
-          rows.push([r.id, r.date, r.course, h.number, h.par || '', s.id, s.club, s.strokeType, s.lie || '', s.slope || '', s.outcome, (s.notes||''), s.ts, strokes, h.putts||0, r.currentHole||0]);
+          rows.push([r.id, r.date, r.course, h.number, h.par || '', s.id, s.club, s.strokeType, s.lie || '', s.slope || '', s.outcome, (s.notes||''), s.ts, strokes, h.putts||0, r.currentHole||0, r.viewMode||'all']);
         });
       } else {
-        rows.push([r.id, r.date, r.course, h.number, h.par || '', '', '', '', '', '', '', '', '', strokes, h.putts||0, r.currentHole||0]);
+        rows.push([r.id, r.date, r.course, h.number, h.par || '', '', '', '', '', '', '', '', '', strokes, h.putts||0, r.currentHole||0, r.viewMode||'all']);
       }
     });
   });
@@ -316,19 +310,34 @@ async function renderRoundsList(){
 }
 
 // render active round UI (with per-hole scoring + navigation)
+// now respects round.viewMode: 'current' -> shows only active hole; 'all' -> shows full holes grid
 function renderActiveRound(){
   if(!CURRENT_ROUND){
     activeRoundSection.classList.add('hidden');
     return;
   }
   activeRoundSection.classList.remove('hidden');
-  // ensure currentHole exists
   if(typeof CURRENT_ROUND.currentHole !== 'number') CURRENT_ROUND.currentHole = 0;
+  if(!CURRENT_ROUND.viewMode) CURRENT_ROUND.viewMode = 'all';
   const activeHole = getActiveHole(CURRENT_ROUND);
   const lastHoleNumber = activeHole ? activeHole.number : 1;
   const totals = computeRoundTotals(CURRENT_ROUND);
   roundTitle.textContent = `${CURRENT_ROUND.course} • Hole ${lastHoleNumber}`;
-  roundMeta.textContent = `Date ${CURRENT_ROUND.date} • ${CURRENT_ROUND.holes.length} hole(s) • Total: ${totals.totalStrokes} (Par ${totals.totalPar}) • ${totals.diff>0? '+'+totals.diff : (totals.diff<0? totals.diff : 'E')}`;
+
+  // header meta + view toggle
+  const viewToggleText = (CURRENT_ROUND.viewMode === 'current') ? 'Show all holes' : 'Show current hole';
+  roundMeta.innerHTML = `Date ${CURRENT_ROUND.date} • ${CURRENT_ROUND.holes.length} hole(s) • Total: ${totals.totalStrokes} (Par ${totals.totalPar}) • ${totals.diff>0? '+'+totals.diff : (totals.diff<0? totals.diff : 'E')}
+    <div style="margin-top:6px"><button id="toggleViewBtn" class="btn" style="padding:8px;font-size:13px">${viewToggleText}</button></div>`;
+
+  // attach toggle handler (delegated after DOM insertion)
+  setTimeout(()=> {
+    const tbtn = document.getElementById('toggleViewBtn');
+    if(tbtn) tbtn.onclick = async ()=>{
+      CURRENT_ROUND.viewMode = (CURRENT_ROUND.viewMode === 'current') ? 'all' : 'current';
+      await saveRound(CURRENT_ROUND);
+      renderActiveRound();
+    };
+  }, 0);
 
   // favorites
   quickFavorites.innerHTML = '';
@@ -371,36 +380,74 @@ function renderActiveRound(){
   navDiv.appendChild(jumpInfo);
   recentShots.appendChild(navDiv);
 
-  // show holes as compact list with par & strokes & result
-  const holesDiv = document.createElement('div');
-  holesDiv.style.display = 'grid';
-  holesDiv.style.gridTemplateColumns = 'repeat(3,1fr)';
-  holesDiv.style.gap = '8px';
-  (CURRENT_ROUND.holes || []).forEach((h, idx)=>{
-    const strokes = computeHoleStrokes(h);
-    const res = holeResult(h);
+  // if viewMode === 'current' show only the active hole card
+  if(CURRENT_ROUND.viewMode === 'current'){
+    const h = activeHole;
+    const strokes = h ? computeHoleStrokes(h) : 0;
+    const res = h ? holeResult(h) : 'E';
     const col = document.createElement('div');
     col.className = 'shotItem';
-    col.style.padding = '8px';
-    // highlight active hole
-    if(idx === (CURRENT_ROUND.currentHole || 0)){
-      col.style.border = '2px solid var(--primary)';
-    }
+    col.style.padding = '12px';
     col.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
-      <div><strong>Hole ${h.number}</strong> <div class="muted small">Par ${h.par||'-'}</div></div>
+      <div><strong>Hole ${h.number}</strong><div class="muted small">Par ${h.par||'-'}</div></div>
       <div style="text-align:right">
-        <div style="font-weight:700">${strokes}</div>
+        <div style="font-weight:700;font-size:20px">${strokes}</div>
         <div class="muted small">${res}</div>
       </div>
     </div>
-    <div class="muted small" style="margin-top:6px">${(h.shots||[]).length} shots • Putts: ${h.putts||0}</div>
-    <div style="margin-top:8px">
-      <button class="btn" style="padding:8px;font-size:13px" data-r="${CURRENT_ROUND.id}" data-h="${h.id}" onclick="openDetailedShotFormById(this)">Add Shot</button>
+    <div class="muted small" style="margin-top:8px">${(h.shots||[]).length} shots • Putts: ${h.putts||0}</div>
+    <div style="margin-top:12px" class="row gap">
+      <button class="btn" style="flex:1" onclick="openDetailedShotFormByIdSimple()">Add Shot</button>
+      <button class="btn" style="flex:1" onclick="advanceHoleAndSave()">Done & Next</button>
     </div>`;
-    holesDiv.appendChild(col);
-  });
+    recentShots.appendChild(col);
 
-  recentShots.appendChild(holesDiv);
+    // attach simple helpers for these inline buttons
+    window.openDetailedShotFormByIdSimple = function(){
+      openDetailedShotForm(CURRENT_ROUND, h);
+    };
+    window.advanceHoleAndSave = async function(){
+      // auto-advance to next hole (if available), otherwise stay
+      const idx = CURRENT_ROUND.currentHole || 0;
+      if(idx < (CURRENT_ROUND.holes.length - 1)){
+        setActiveHoleIndex(CURRENT_ROUND, idx + 1);
+        await saveRound(CURRENT_ROUND);
+      } else {
+        // at last hole: keep as is and alert
+        alert('This is the last hole.');
+      }
+      renderActiveRound();
+    };
+  } else {
+    // viewMode === 'all' -> show full holes grid
+    const holesDiv = document.createElement('div');
+    holesDiv.style.display = 'grid';
+    holesDiv.style.gridTemplateColumns = 'repeat(3,1fr)';
+    holesDiv.style.gap = '8px';
+    (CURRENT_ROUND.holes || []).forEach((h, idx)=>{
+      const strokes = computeHoleStrokes(h);
+      const res = holeResult(h);
+      const col = document.createElement('div');
+      col.className = 'shotItem';
+      col.style.padding = '8px';
+      if(idx === (CURRENT_ROUND.currentHole || 0)){
+        col.style.border = '2px solid var(--primary)';
+      }
+      col.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
+        <div><strong>Hole ${h.number}</strong> <div class="muted small">Par ${h.par||'-'}</div></div>
+        <div style="text-align:right">
+          <div style="font-weight:700">${strokes}</div>
+          <div class="muted small">${res}</div>
+        </div>
+      </div>
+      <div class="muted small" style="margin-top:6px">${(h.shots||[]).length} shots • Putts: ${h.putts||0}</div>
+      <div style="margin-top:8px">
+        <button class="btn" style="padding:8px;font-size:13px" data-r="${CURRENT_ROUND.id}" data-h="${h.id}" onclick="openDetailedShotFormById(this)">Add Shot</button>
+      </div>`;
+      holesDiv.appendChild(col);
+    });
+    recentShots.appendChild(holesDiv);
+  }
 
   // total summary
   const summary = document.createElement('div');
@@ -423,7 +470,6 @@ window.openDetailedShotFormById = function(btn){
       if(!r) return alert('Round not found');
       CURRENT_ROUND = r;
       const hole = r.holes.find(x=>x.id===hId);
-      // set the round's currentHole to this hole's index
       const idx = r.holes.findIndex(x=>x.id===hId);
       if(idx >= 0) r.currentHole = idx;
       openDetailedShotForm(r,hole);
