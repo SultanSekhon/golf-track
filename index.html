@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a84ff">
+<title>GolfTrack — Quick Log</title>
+
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.svg">
+<link rel="stylesheet" href="/styles.css">
+
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="topbar">
+      <div class="title">GolfTrack</div>
+      <button id="menuBtn" aria-label="Menu" class="iconBtn">☰</button>
+    </header>
+
+    <main class="content">
+      <section class="create-round card">
+        <div class="row">
+          <input id="course" class="input large" placeholder="Course (optional)" />
+          <input id="roundDate" class="input small" type="date" />
+        </div>
+        <div class="row gap">
+          <button id="createRound" class="btn primary">Start Round</button>
+          <button id="exportBtn" class="btn">Export CSV</button>
+        </div>
+      </section>
+
+      <section id="activeRound" class="card hidden">
+        <div class="row between">
+          <div>
+            <div id="roundTitle" class="roundTitle"></div>
+            <div id="roundMeta" class="muted small"></div>
+          </div>
+          <div>
+            <button id="quickLogBtn" class="btn icon">+ Log</button>
+            <button id="endRoundBtn" class="btn danger">End</button>
+          </div>
+        </div>
+
+        <div id="quickFavorites" class="favRow"></div>
+
+        <div id="recentShots" class="shotsList"></div>
+
+        <div class="row gap">
+          <button id="addHoleBtn" class="btn">Add Hole</button>
+          <button id="showStatsBtn" class="btn">Stats</button>
+        </div>
+      </section>
+
+      <!-- Overlay forms -->
+      <div id="overlay" class="overlay hidden" role="dialog" aria-modal="true"></div>
+    </main>
+
+    <nav class="bottomNav">
+      <button id="navRounds" class="navBtn active">Rounds</button>
+      <button id="navSettings" class="navBtn">Settings</button>
+    </nav>
+  </div>
+
+<script src="/app.js" defer></script>
+</body>
+</html>
