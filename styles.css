@@ -27,7 +27,12 @@
     font-size: 17px;
     line-height: 1.4;
   }
-  
+
+    input, textarea { 
+        -webkit-user-select: text;
+        user-select: text;
+    }
+
   .topbar {
     display: flex;
     align-items: center;
@@ -228,4 +233,5 @@
   }
 
   
+
 
