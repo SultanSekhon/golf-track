@@ -158,7 +158,7 @@
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,0.25);
-    display: flex;
+    display: none;
     align-items: flex-end;
     padding: 16px;
     backdrop-filter: blur(0px);
@@ -241,6 +241,7 @@
   }
 
   
+
 
 
 
