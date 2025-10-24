@@ -1,40 +1,42 @@
-const CACHE_NAME = 'golftrack-cache-v1';
-const URLS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/styles.css',
-  '/app.js',
-  '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/apple-touch-icon.svg'
+// sw.js
+const CACHE = 'golftrack-v1';
+const ASSETS = [
+  './',
+  './index.html',
+  './styles.css',
+  './app.js',
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
-self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(URLS_TO_CACHE))
-  );
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
   self.skipWaiting();
 });
 
-self.addEventListener('activate', event => {
-  event.waitUntil(self.clients.claim());
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.map(k => (k !== CACHE ? caches.delete(k) : null)))
+    )
+  );
+  self.clients.claim();
 });
 
-self.addEventListener('fetch', event => {
-  const req = event.request;
-  // network-first for API? but app shell cache-first
-  if(req.method !== 'GET') return;
-  event.respondWith(
-    caches.match(req).then(cached => {
-      if(cached) return cached;
-      return fetch(req).then(resp => {
-        return caches.open(CACHE_NAME).then(cache => {
-          // cache new GET responses (options: limit size)
-          if(req.url.startsWith(self.location.origin)) cache.put(req, resp.clone());
-          return resp;
-        });
-      }).catch(()=> caches.match('/index.html'));
-    })
+self.addEventListener('fetch', (e) => {
+  const { request } = e;
+  // only cache GETs
+  if (request.method !== 'GET') return;
+  e.respondWith(
+    caches.match(request).then(cached =>
+      cached ||
+      fetch(request).then(resp => {
+        const copy = resp.clone();
+        caches.open(CACHE).then(c => c.put(request, copy));
+        return resp;
+      }).catch(() => cached) // fall back to cache if offline
+    )
   );
 });
+
