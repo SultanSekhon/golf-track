@@ -84,6 +84,16 @@ input, textarea {
 .row.between { justify-content: space-between; }
 .row.gap { gap: 12px; }
 
+.create-round .row:first-of-type {
+  margin-bottom: 12px;
+}
+
+@media (max-width: 430px) {
+  .create-round .row:first-of-type {
+    margin-bottom: 14px;
+  }
+}
+
 .input {
   padding: 12px;
   border-radius: 12px;
@@ -356,3 +366,4 @@ table th, table td {
   .overlay { padding: 16px; }
   .form { max-height: 90vh; overflow-y: auto; }
 }
+
