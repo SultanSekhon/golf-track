@@ -162,20 +162,22 @@
   }
   .navBtn.active { background: #f2f2f2; }
   
-.overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.25);
-  display: flex;
-  align-items: flex-end;
-  padding: 16px;
-  backdrop-filter: blur(0px);
-  z-index: 1000;
-}
-.overlay.hidden {
-  display: none !important;
-  pointer-events: none;
-}
+  /* Overlay */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.25);
+    display: flex;              /* FIX: was display:none !important */
+    align-items: flex-end;
+    padding: 16px;
+    backdrop-filter: blur(0px);
+    z-index: 1000;
+  }
+
+  .overlay.hidden {
+      display: none !important; /* FIX: hide via .hidden instead */
+      pointer-events: none;
+  }
 
   .form {
     width: 100%;
@@ -225,34 +227,38 @@
     border-color: transparent;
     box-shadow: 0 2px 6px rgba(10,132,255,0.4);
   }
-  
+  /* Replace existing .pickerBtn.recommended and .pickerBtn.more-btn rules with this */
 
 .pickerBtn.recommended {
-  background: #f2f2f2;              
-  border: 1px solid #e0e0e0;     
-  color: #111;              
-  font-weight: 600;               
-  box-shadow: none;           
+  /* keep a subtle emphasis but match the neutral picker style */
+  background: #f2f2f2;               /* same base as other pickers */
+  border: 1px solid #e0e0e0;         /* consistent border */
+  color: #111;                       /* same text color as normal pickers */
+  font-weight: 600;                  /* slightly bolder to indicate recommendation */
+  box-shadow: none;                  /* remove blue glow that made it stand out */
 }
 
 .pickerBtn.recommended:hover {
-  border-color: var(--primary);     
-  background: #f7f9ff;           
+  border-color: var(--primary);      /* slight highlight on hover */
+  background: #f7f9ff;               /* very subtle tint on hover */
 }
 
+/* Make the More... button visually consistent with other picker buttons */
 .pickerBtn.more-btn {
-  background: #f2f2f2;              
+  background: #f2f2f2;               /* neutral like other pickers */
   border: 1px solid #e0e0e0;
   color: #111;
   font-weight: 600;
 }
 
+/* Optional: keep the same hover effect as other pickers */
 .pickerBtn.more-btn:hover {
   border-color: #cfcfcf;
   background: #efeff1;
 }
 
-
+  
+  /* Add Shot and Done & Next button styling */
   .add-shot-btn, .done-next-btn {
     background: var(--primary);
     color: white;
@@ -287,6 +293,7 @@
     margin-top: 6px;
   }
   
+  /* Smooth scroll and inertial momentum for pickers on iOS */
   .pickerGrid,
   .favRow {
     -webkit-overflow-scrolling: touch;
@@ -337,8 +344,3 @@
       overflow-y: auto;
     }
   }
-
-
-
-
-
