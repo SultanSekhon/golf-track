@@ -10,7 +10,7 @@
      - CSV schema is the same as app.js export headers.
 
   Behavior:
-  - Stats button (#statsBtn) toggles panel (#statsPanel). Creates if missing.
+  - Stats button (#showStatsBtn) toggles panel (#statsPanel). Creates if missing.
   - Two tabs: Stroke and Club.
   - Auto-refreshes every 10 seconds while panel is visible (from IndexedDB and CSV URL if set).
   - No distance-based metrics are shown; only counts and percentages.
