@@ -27,7 +27,7 @@
 */
 
 (function(){
-  const BTN_ID = 'statsBtn';
+  const BTN_ID = 'showStatsBtn';
   const PANEL_ID = 'statsPanel';
   const DB_NAME = 'golftrack-db-v1';
   const STORE = 'rounds';
