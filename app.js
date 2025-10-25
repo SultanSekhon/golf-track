@@ -297,6 +297,11 @@ async function renderRoundsList(){
 
   const createCard = document.querySelector('.create-round');
   createCard.insertAdjacentElement('afterend', listRoot);
+     createCard.insertAdjacentElement('afterend', listRoot);
+
+  // Ensure the "Use Local Course" button is present after the rounds list is rendered
+  injectLocalCourseButton();
+
 
   // attach handlers
   listRoot.querySelectorAll('button[data-action="open"]').forEach(b=>{
@@ -970,3 +975,4 @@ function openScorecardOverlay(round){
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 }
+
