@@ -296,12 +296,11 @@ async function renderRoundsList(){
   });
 
   const createCard = document.querySelector('.create-round');
+  // Insert the rounds list once
   createCard.insertAdjacentElement('afterend', listRoot);
-     createCard.insertAdjacentElement('afterend', listRoot);
 
   // Ensure the "Use Local Course" button is present after the rounds list is rendered
   injectLocalCourseButton();
-
 
   // attach handlers
   listRoot.querySelectorAll('button[data-action="open"]').forEach(b=>{
@@ -330,6 +329,7 @@ async function renderRoundsList(){
     renderActiveRound();
   }
 }
+
 
 // render active round UI (with per-hole scoring + navigation)
 // now respects round.viewMode: 'current' -> shows only active hole; 'all' -> shows full holes grid
@@ -975,4 +975,5 @@ function openScorecardOverlay(round){
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 }
+
 
