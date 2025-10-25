@@ -1,6 +1,9 @@
 /* GolfTrack PWA - app.js (UPDATED: Local course opens in compact current-hole view by default)
    - new round.viewMode: 'current' or 'all'
    - toggle button in active header to switch views
+   - auto-mark first shot of hole as tee shot
+   - full PGA penalty system (multiple penalty types) with UI
+   - View Scorecard with penalties and CSV export
 */
 
 const DB_NAME = 'golftrack-db-v1';
@@ -53,14 +56,25 @@ async function deleteRound(id){
 // default config (stored in localStorage)
 const DEFAULTS = {
   clubs: ['Driver','3-wood','5-wood','3-iron','4-iron','5-iron','6-iron','7-iron','8-iron','9-iron','PW','GW','SW','LW','Putter'],
-  lies: ['Fairway','Rough','Deep Rough','Bunker','Green','Fringe','Woods','Hazard','Other'],
+  lies: ['Tee','Fairway','Rough','Deep Rough','Bunker','Green','Fringe','Woods','Hazard','Other'],
   strokes: ['Full','Pitch','Chip','Bunker','Putt'],
   outcomes: ['Good','Thin','Fat','Topped','Chunk','Hook','Slice','Push','Pull','Shank','Skull','Bladed','Duff','Other'],
   slopes: ['Flat','Uphill','Downhill','Ball Above Feet','Ball Below Feet','Tight Lie','Plugged','Other'],
   favorites: [
     {club:'Putter', outcome:'Good', lie:'Green', stroke:'Putt', label:'Putt Good'},
     {club:'Driver', outcome:'Slice', lie:'Fairway', stroke:'Full', label:'Driver Slice'},
-  ]
+  ],
+  // penalty types and their default penalty stroke count (PGA simplified)
+  penaltyTypes: [
+    { key: 'Lost Ball', label: 'Lost Ball (stroke-and-distance)', strokes: 1 },
+    { key: 'Out of Bounds', label: 'Out of Bounds (stroke-and-distance)', strokes: 1 },
+    { key: 'Water Hazard', label: 'Water Hazard', strokes: 1 },
+    { key: 'Penalty Area', label: 'Penalty Area', strokes: 1 },
+    { key: 'Unplayable', label: 'Unplayable (player-declared)', strokes: 1 },
+    { key: 'Other', label: 'Other', strokes: 1 }
+  ],
+  // new setting: whether to apply PGA stroke-and-distance behavior for lost ball (used as a hint)
+  pgaLostBall: true
 };
 
 function getConfig(){
@@ -124,8 +138,11 @@ function computeHoleStrokes(hole){
   const totalShotEntries = shots.length;
   const puttShots = shots.filter(s => (s.strokeType||'').toLowerCase() === 'putt').length;
   const extraPutts = hole.putts || 0;
-  const strokes = totalShotEntries + extraPutts - puttShots;
-  return Math.max(strokes, totalShotEntries);
+  // penalties: sum the strokes field of each penalty entry
+  const penalties = (hole.penalties && hole.penalties.length) ? hole.penalties.reduce((acc,p)=>acc + (p.strokes||1), 0) : 0;
+  // total strokes is shots + penalty strokes + any extra putts minus putt entries (because extraPutts already counted separately)
+  const strokes = totalShotEntries + extraPutts + penalties - puttShots;
+  return Math.max(strokes, totalShotEntries + penalties);
 }
 
 // compute hole result string relative to par
@@ -175,7 +192,7 @@ async function createLocalCourseRound(){
   const courseName = LOCAL_COURSE.name;
   const r = { id: uid(), date: new Date().toISOString().slice(0,10), course: courseName, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0, viewMode:'current' };
   for(let i=0;i<LOCAL_COURSE.pars.length;i++){
-    r.holes.push({ id: uid(), number: i+1, par: LOCAL_COURSE.pars[i], shots: [], putts: 0 });
+    r.holes.push({ id: uid(), number: i+1, par: LOCAL_COURSE.pars[i], shots: [], putts: 0, penalties: [] });
   }
   await saveRound(r);
   CURRENT_ROUND = r;
@@ -188,7 +205,7 @@ $('createRound').addEventListener('click', async ()=>{
   const course = $('course').value.trim() || 'Unknown';
   const date = $('roundDate').value || new Date().toISOString().slice(0,10);
   const r = { id: uid(), date, course, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0, viewMode:'all' };
-  r.holes.push({ id: uid(), number:1, par:4, shots:[], putts:0 });
+  r.holes.push({ id: uid(), number:1, par:4, shots:[], putts:0, penalties: [] });
   await saveRound(r);
   CURRENT_ROUND = r;
   renderActiveRound();
@@ -216,7 +233,7 @@ $('addHoleBtn').addEventListener('click', async ()=>{
     return alert('Maximum 18 holes reached.');
   }
   const holeNumber = (CURRENT_ROUND.holes.length || 0) + 1;
-  CURRENT_ROUND.holes.push({ id: uid(), number: holeNumber, par:4, shots:[], putts:0 });
+  CURRENT_ROUND.holes.push({ id: uid(), number: holeNumber, par:4, shots:[], putts:0, penalties: [] });
   setActiveHoleIndex(CURRENT_ROUND, CURRENT_ROUND.holes.length - 1);
   CURRENT_ROUND.viewMode = 'current';
   await saveRound(CURRENT_ROUND);
@@ -227,16 +244,16 @@ $('addHoleBtn').addEventListener('click', async ()=>{
 $('exportBtn').addEventListener('click', async ()=>{
   const rounds = await loadAllRounds();
   if(!rounds.length){ alert('No rounds to export'); return; }
-  const rows = [['round_id','date','course','hole','par','shot_id','club','stroke','lie','slope','outcome','notes','timestamp','strokes','putts','currentHoleIndex','viewMode']];
+  const rows = [['round_id','date','course','hole','par','shot_id','club','stroke','lie','slope','outcome','notes','timestamp','strokes','putts','penalties','shot_is_tee','currentHoleIndex','viewMode']];
   rounds.forEach(r=>{
     r.holes.forEach(h=>{
       const strokes = computeHoleStrokes(h);
       if(h.shots && h.shots.length){
         h.shots.forEach(s=>{
-          rows.push([r.id, r.date, r.course, h.number, h.par || '', s.id, s.club, s.strokeType, s.lie || '', s.slope || '', s.outcome, (s.notes||''), s.ts, strokes, h.putts||0, r.currentHole||0, r.viewMode||'all']);
+          rows.push([r.id, r.date, r.course, h.number, h.par || '', s.id, s.club, s.strokeType, s.lie || '', s.slope || '', s.outcome, (s.notes||''), s.ts, strokes, h.putts||0, (h.penalties? h.penalties.length:0), (s.isTee? '1':'0'), r.currentHole||0, r.viewMode||'all']);
         });
       } else {
-        rows.push([r.id, r.date, r.course, h.number, h.par || '', '', '', '', '', '', '', '', '', strokes, h.putts||0, r.currentHole||0, r.viewMode||'all']);
+        rows.push([r.id, r.date, r.course, h.number, h.par || '', '', '', '', '', '', '', '', '', strokes, h.putts||0, (h.penalties? h.penalties.length:0), '0', r.currentHole||0, r.viewMode||'all']);
       }
     });
   });
@@ -324,10 +341,13 @@ function renderActiveRound(){
   const totals = computeRoundTotals(CURRENT_ROUND);
   roundTitle.textContent = `${CURRENT_ROUND.course} • Hole ${lastHoleNumber}`;
 
-  // header meta + view toggle
+  // header meta + view toggle + view scorecard
   const viewToggleText = (CURRENT_ROUND.viewMode === 'current') ? 'Show all holes' : 'Show current hole';
   roundMeta.innerHTML = `Date ${CURRENT_ROUND.date} • ${CURRENT_ROUND.holes.length} hole(s) • Total: ${totals.totalStrokes} (Par ${totals.totalPar}) • ${totals.diff>0? '+'+totals.diff : (totals.diff<0? totals.diff : 'E')}
-    <div style="margin-top:6px"><button id="toggleViewBtn" class="btn" style="padding:8px;font-size:13px">${viewToggleText}</button></div>`;
+    <div style="margin-top:6px">
+      <button id="toggleViewBtn" class="btn" style="padding:8px;font-size:13px">${viewToggleText}</button>
+      <button id="viewScorecardBtn" class="btn" style="padding:8px;font-size:13px;margin-left:8px">View Scorecard</button>
+    </div>`;
 
   // attach toggle handler (delegated after DOM insertion)
   setTimeout(()=> {
@@ -337,6 +357,8 @@ function renderActiveRound(){
       await saveRound(CURRENT_ROUND);
       renderActiveRound();
     };
+    const scbtn = document.getElementById('viewScorecardBtn');
+    if(scbtn) scbtn.onclick = ()=> openScorecardOverlay(CURRENT_ROUND);
   }, 0);
 
   // favorites
@@ -388,6 +410,9 @@ function renderActiveRound(){
     const col = document.createElement('div');
     col.className = 'shotItem';
     col.style.padding = '12px';
+    // penalties count & list
+    const penCount = (h && h.penalties) ? h.penalties.length : 0;
+    const penList = (h && h.penalties && h.penalties.length) ? h.penalties.map(p=>`${p.type}${p.note?(' ('+p.note+')') : ''}`).join(', ') : 'None';
     col.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
       <div><strong>Hole ${h.number}</strong><div class="muted small">Par ${h.par||'-'}</div></div>
       <div style="text-align:right">
@@ -395,7 +420,8 @@ function renderActiveRound(){
         <div class="muted small">${res}</div>
       </div>
     </div>
-    <div class="muted small" style="margin-top:8px">${(h.shots||[]).length} shots • Putts: ${h.putts||0}</div>
+    <div class="muted small" style="margin-top:8px">${(h.shots||[]).length} shots • Putts: ${h.putts||0} • Penalties: ${penCount}</div>
+    <div class="muted small" style="margin-top:6px">Penalties: ${penList}</div>
     <div style="margin-top:12px" class="row gap">
       <button class="btn" style="flex:1" onclick="openDetailedShotFormByIdSimple()">Add Shot</button>
       <button class="btn" style="flex:1" onclick="advanceHoleAndSave()">Done & Next</button>
@@ -433,6 +459,7 @@ function renderActiveRound(){
       if(idx === (CURRENT_ROUND.currentHole || 0)){
         col.style.border = '2px solid var(--primary)';
       }
+      const penCount = (h.penalties? h.penalties.length : 0);
       col.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
         <div><strong>Hole ${h.number}</strong> <div class="muted small">Par ${h.par||'-'}</div></div>
         <div style="text-align:right">
@@ -440,7 +467,7 @@ function renderActiveRound(){
           <div class="muted small">${res}</div>
         </div>
       </div>
-      <div class="muted small" style="margin-top:6px">${(h.shots||[]).length} shots • Putts: ${h.putts||0}</div>
+      <div class="muted small" style="margin-top:6px">${(h.shots||[]).length} shots • Putts: ${h.putts||0} • Penalties: ${penCount}</div>
       <div style="margin-top:8px">
         <button class="btn" style="padding:8px;font-size:13px" data-r="${CURRENT_ROUND.id}" data-h="${h.id}" onclick="openDetailedShotFormById(this)">Add Shot</button>
       </div>`;
@@ -497,7 +524,14 @@ async function quickLogFromFavorite(fav){
     notes: fav.notes||'',
     ts: new Date().toISOString()
   };
+  // mark tee if first shot on hole
+  hole.shots = hole.shots || [];
+  if(!hole.shots.length){
+    shot.isTee = true;
+    if(!shot.lie) shot.lie = 'Tee';
+  }
   hole.shots.push(shot);
+  hole.penalties = hole.penalties || [];
   await saveRound(CURRENT_ROUND);
   renderActiveRound();
 }
@@ -544,6 +578,17 @@ function openQuickLog(round){
     </div>
 
     <div style="height:8px"></div>
+
+    <div>
+      <label class="small">Add Penalty (optional)</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="quickPenaltySelect" class="input" style="flex:1"></select>
+        <input id="quickPenaltyNote" class="input" placeholder="Note (optional)" style="width:160px"/>
+        <button id="addQuickPenaltyBtn" class="btn">Add</button>
+      </div>
+    </div>
+
+    <div style="height:8px"></div>
     <input id="noteInput" class="input" placeholder="Short note (e.g. tight lie, wind left)" />
     <div class="row gap" style="margin-top:10px">
       <button id="saveShot" class="btn primary">Save</button>
@@ -570,6 +615,39 @@ function openQuickLog(round){
   const slg = form.querySelector('#slopeGrid');
   CFG.slopes.forEach(s=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=s; b.onclick=()=>selectPicker('slope',s,b); slg.appendChild(b); });
 
+  // penalty select
+  const psel = form.querySelector('#quickPenaltySelect');
+  (CFG.penaltyTypes || []).forEach(p=>{
+    const opt = document.createElement('option'); opt.value = p.key; opt.textContent = p.label + (p.strokes ? ` (+${p.strokes})` : '');
+    psel.appendChild(opt);
+  });
+  const addQuickPenaltyBtn = form.querySelector('#addQuickPenaltyBtn');
+  addQuickPenaltyBtn.onclick = ()=>{
+    const key = psel.value;
+    const pt = (CFG.penaltyTypes || []).find(x=>x.key===key);
+    if(!pt) return alert('Select a penalty type');
+    // keep a temporary penalties array on the form state
+    form._tmpPenalties = form._tmpPenalties || [];
+    form._tmpPenalties.push({ id: uid(), type: pt.key, strokes: pt.strokes || 1, ts: new Date().toISOString(), note: form.querySelector('#quickPenaltyNote').value||'' });
+    form.querySelector('#quickPenaltyNote').value = '';
+    // update UI to show current penalties
+    updateQuickPenaltyList();
+  };
+  function updateQuickPenaltyList(){
+    // remove existing indicator if any
+    const existing = form.querySelector('.quick-pen-list');
+    if(existing) existing.remove();
+    const list = document.createElement('div'); list.className = 'quick-pen-list muted small'; list.style.marginTop = '8px';
+    const tmp = form._tmpPenalties || [];
+    if(!tmp.length){
+      list.textContent = 'No penalties added';
+    } else {
+      list.textContent = 'Penalties: ' + tmp.map(p=>`${p.type}${p.note?(' ('+p.note+')') : ''}`).join(', ');
+    }
+    addQuickPenaltyBtn.parentElement.parentElement.appendChild(list);
+  }
+  updateQuickPenaltyList();
+
   // keep track of selections
   const selection = { club: null, stroke: null, outcome: null, lie: null, slope: null };
 
@@ -591,6 +669,8 @@ function openQuickLog(round){
     }
     const hole = getActiveHole(round);
     if(!hole) return alert('Active hole not found.');
+    // ensure penalty array exists
+    hole.penalties = hole.penalties || [];
     const shot = {
       id: uid(),
       club: selection.club,
@@ -601,7 +681,17 @@ function openQuickLog(round){
       notes: form.querySelector('#noteInput').value||'',
       ts: new Date().toISOString()
     };
+    // mark tee if first shot on hole
+    hole.shots = hole.shots || [];
+    if(!hole.shots.length){
+      shot.isTee = true;
+      if(!shot.lie) shot.lie = 'Tee';
+    }
     hole.shots.push(shot);
+    // attach any temporary penalties the user added in quick log
+    if(form._tmpPenalties && form._tmpPenalties.length){
+      hole.penalties = (hole.penalties || []).concat(form._tmpPenalties);
+    }
     await saveRound(round);
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
@@ -612,6 +702,12 @@ function openDetailedShotForm(round,hole){
   overlay.innerHTML = '';
   overlay.classList.remove('hidden');
   const form = document.createElement('div'); form.className = 'form';
+  // build penalty options html for select in the form
+  let penaltyOptionsHTML = '';
+  (CFG.penaltyTypes || []).forEach(p=>{
+    penaltyOptionsHTML += `<option value="${p.key}">${p.label}${p.strokes?(' (+'+p.strokes+')') : ''}</option>`;
+  });
+
   form.innerHTML = `<h3>Shot — Hole ${hole.number}</h3>
     <label class="small">Club <div id="dclub" class="pickerGrid"></div></label>
     <label class="small">Stroke <div id="dstroke" class="pickerGrid"></div></label>
@@ -619,10 +715,24 @@ function openDetailedShotForm(round,hole){
     <label class="small">Slope <div id="dslope" class="pickerGrid"></div></label>
     <label class="small">Outcome <div id="dout" class="pickerGrid"></div></label>
     <input id="notes" class="input" placeholder="Notes (short)">
+    <div style="height:8px"></div>
+    <div>
+      <label class="small">Add Penalty</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="penaltySelect" class="input" style="flex:1">
+          ${penaltyOptionsHTML}
+        </select>
+        <input id="penaltyNote" class="input" placeholder="Note (optional)" style="width:160px"/>
+        <button id="addPenaltyBtn" class="btn">Add Penalty</button>
+      </div>
+      <div class="muted small" id="penList" style="margin-top:6px">${(hole.penalties && hole.penalties.length)? hole.penalties.map(p=>p.type+(p.note?(' ('+p.note+')') : '')).join(', ') : 'No penalties'}</div>
+    </div>
+
     <div class="row gap" style="margin-top:10px">
       <button id="save" class="btn primary">Save</button>
       <button id="cancel" class="btn">Cancel</button>
       <button id="addPutt" class="btn">+Putt</button>
+      <button id="lostBall" class="btn" title="PGA: stroke-and-distance">Lost Ball (PGA)</button>
     </div>`;
   overlay.appendChild(form);
 
@@ -651,10 +761,41 @@ function openDetailedShotForm(round,hole){
     await saveRound(round);
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
+
+  // ensure hole.penalties exists
+  hole.penalties = hole.penalties || [];
+
+  // Add penalty button handler
+  form.querySelector('#addPenaltyBtn').onclick = async ()=>{
+    const sel = form.querySelector('#penaltySelect').value;
+    const note = form.querySelector('#penaltyNote').value||'';
+    const pt = (CFG.penaltyTypes || []).find(x=>x.key === sel);
+    if(!pt) return alert('Invalid penalty selected');
+    hole.penalties.push({ id: uid(), type: pt.key, strokes: pt.strokes || 1, ts: new Date().toISOString(), note });
+    await saveRound(round);
+    form.querySelector('#penList').textContent = hole.penalties.map(p=>p.type+(p.note?(' ('+p.note+')') : '')).join(', ');
+    form.querySelector('#penaltyNote').value = '';
+    renderActiveRound();
+  };
+
+  form.querySelector('#lostBall').onclick = async ()=>{
+    if(!CFG.pgaLostBall){
+      // still allow adding, but inform user
+      if(!confirm('PGA lost-ball handling is currently disabled in Settings. Add penalty anyway?')) return;
+    }
+    // add Lost Ball penalty type (if exists in CFG) else fallback
+    const pt = (CFG.penaltyTypes || []).find(x=>x.key==='Lost Ball') || (CFG.penaltyTypes||[])[0];
+    hole.penalties.push({ id: uid(), type: pt.key, strokes: pt.strokes || 1, ts: new Date().toISOString(), note: 'Lost ball recorded' });
+    await saveRound(round);
+    alert('Lost Ball recorded: +1 penalty stroke (stroke-and-distance). You should replay from the appropriate previous spot/tee as required by the rules.');
+    overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
+  };
+
   form.querySelector('#save').onclick = async ()=>{
     if(!selection.club || !selection.stroke || !selection.outcome){
       return alert('Select club, stroke and outcome first.');
     }
+    hole.penalties = hole.penalties || [];
     const shot = {
       id: uid(),
       club: selection.club,
@@ -665,6 +806,12 @@ function openDetailedShotForm(round,hole){
       notes: form.querySelector('#notes').value || '',
       ts: new Date().toISOString()
     };
+    // auto-assign tee if first shot of hole
+    hole.shots = hole.shots || [];
+    if(!hole.shots.length){
+      shot.isTee = true;
+      if(!shot.lie) shot.lie = 'Tee';
+    }
     hole.shots.push(shot);
     await saveRound(round);
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
@@ -677,7 +824,7 @@ function openSettings(){
   const cfg = getConfig();
   const form = document.createElement('div'); form.className='form';
   form.innerHTML = `<h3>Settings</h3>
-    <div class="smallNote">Edit your club list, lie list, slope list and favorites. Favorites appear on the main screen for one-tap logging.</div>
+    <div class="smallNote">Edit your club list, lie list, slope list and favorites. Favorites appear on the main screen for one-tap logging. Edit penalty types below to reflect PGA options.</div>
     <div style="height:8px"></div>
 
     <label class="small">Clubs (comma separated)</label>
@@ -695,12 +842,25 @@ function openSettings(){
     <label class="small">Favorites (one per line, format: label | club | outcome | lie | stroke )</label>
     <textarea id="favText" style="width:100%;min-height:120px;border-radius:10px;padding:8px">${(cfg.favorites||[]).map(f=>`${f.label}|${f.club}|${f.outcome}|${f.lie||''}|${f.stroke||''}`).join('\n')}</textarea>
 
+    <div style="height:8px"></div>
+    <label class="small">Penalty Types (one per line, format: key | label | strokes)</label>
+    <textarea id="penText" style="width:100%;min-height:120px;border-radius:10px;padding:8px">${(cfg.penaltyTypes||[]).map(p=>`${p.key}|${p.label}|${p.strokes||1}`).join('\n')}</textarea>
+
+    <div style="height:8px"></div>
+    <label class="small">PGA Lost Ball Handling</label>
+    <div>
+      <label><input type="checkbox" id="pgaLostChk"> Use PGA stroke-and-distance for lost ball penalties (records +1 penalty stroke)</label>
+    </div>
+
     <div class="row gap" style="margin-top:10px">
       <button id="saveCfg" class="btn primary">Save</button>
       <button id="closeCfg" class="btn">Close</button>
     </div>`;
   overlay.appendChild(form);
   form.querySelector('#closeCfg').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
+  // init checkbox
+  form.querySelector('#pgaLostChk').checked = !!cfg.pgaLostBall;
+
   form.querySelector('#saveCfg').onclick = ()=> {
     const clubs = form.querySelector('#clubsText').value.split(',').map(s=>s.trim()).filter(Boolean);
     const lies = form.querySelector('#liesText').value.split(',').map(s=>s.trim()).filter(Boolean);
@@ -710,10 +870,19 @@ function openSettings(){
       const parts = line.split('|').map(p=>p.trim());
       return { label: parts[0]||`${parts[1]||''} ${parts[2]||''}`, club: parts[1]||'', outcome: parts[2]||'', lie: parts[3]||'', stroke: parts[4]||'' };
     });
+    // parse penalty types textarea
+    const penLines = form.querySelector('#penText').value.split('\n').map(l=>l.trim()).filter(Boolean);
+    const penaltyTypes = penLines.map(line=>{
+      const parts = line.split('|').map(p=>p.trim());
+      return { key: parts[0] || parts[1] || 'Other', label: parts[1] || parts[0] || 'Other', strokes: Number(parts[2]) || 1 };
+    });
+
     CFG.clubs = clubs.length? clubs : DEFAULTS.clubs;
     CFG.lies = lies.length? lies : DEFAULTS.lies;
     CFG.slopes = slopes.length? slopes : DEFAULTS.slopes;
     CFG.favorites = favorites.length? favorites : DEFAULTS.favorites;
+    CFG.penaltyTypes = penaltyTypes.length? penaltyTypes : DEFAULTS.penaltyTypes;
+    CFG.pgaLostBall = !!form.querySelector('#pgaLostChk').checked;
     saveConfig(CFG);
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
@@ -744,3 +913,60 @@ function openSettings(){
   await renderRoundsList();
   renderActiveRound();
 })();
+
+// ----------------- Scorecard overlay & helpers -----------------
+function openScorecardOverlay(round){
+  if(!round) return alert('No active round');
+  overlay.innerHTML = ''; overlay.classList.remove('hidden');
+  const totals = computeRoundTotals(round);
+  const div = document.createElement('div'); div.className='form';
+  let html = `<h3>Scorecard — ${round.course} (${round.date})</h3>
+    <div class="muted small">Total: ${totals.totalStrokes} • Par ${totals.totalPar} • ${totals.diff>0? '+'+totals.diff : (totals.diff<0? totals.diff : 'E')}</div>
+    <div style="height:12px"></div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:6px">Hole</th>
+          <th style="padding:6px">Par</th>
+          <th style="padding:6px">Strokes</th>
+          <th style="padding:6px">Putts</th>
+          <th style="padding:6px">Penalties</th>
+          <th style="padding:6px">Result</th>
+        </tr>
+      </thead>
+      <tbody>`;
+  (round.holes || []).forEach(h=>{
+    const strokes = computeHoleStrokes(h);
+    const res = holeResult(h);
+    html += `<tr>
+      <td style="padding:6px">${h.number}</td>
+      <td style="padding:6px">${h.par||'-'}</td>
+      <td style="padding:6px">${strokes}</td>
+      <td style="padding:6px">${h.putts||0}</td>
+      <td style="padding:6px">${(h.penalties? h.penalties.length: 0)}</td>
+      <td style="padding:6px">${res}</td>
+    </tr>`;
+  });
+  html += `</tbody></table>
+    <div style="height:10px"></div>
+    <div class="row gap">
+      <button id="closeScorecard" class="btn">Close</button>
+      <button id="exportScorecardCSV" class="btn">Export CSV</button>
+    </div>`;
+  div.innerHTML = html;
+  overlay.appendChild(div);
+  document.getElementById('closeScorecard').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
+  document.getElementById('exportScorecardCSV').onclick = ()=> {
+    // reuse export logic but limited to this round
+    const rows = [['hole','par','strokes','putts','penalties','result']];
+    (round.holes||[]).forEach(h=>{
+      const strokes = computeHoleStrokes(h);
+      rows.push([h.number, h.par||'', strokes, h.putts||0, (h.penalties? h.penalties.length:0), holeResult(h)]);
+    });
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `golftrack_scorecard_${round.date}_${round.course.replace(/\s+/g,'_')}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  };
+}
