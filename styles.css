@@ -95,7 +95,11 @@
   }
   .btn:active { transform: scale(0.97); }
   .btn.primary { background: var(--primary); color: white; font-weight: 600; }
-  .btn.danger { background: #f2f2f2; color: #111; }
+  .btn.danger {
+  background: var(--danger);
+  color: #fff;
+  font-weight: 600;
+}
   .icon { min-width: 52px; padding: 12px; text-align: center; }
   .hidden { display: none; }
   
@@ -339,6 +343,7 @@
       overflow-y: auto;
     }
   }
+
 
 
 
