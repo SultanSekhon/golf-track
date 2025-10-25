@@ -95,7 +95,7 @@
   }
   .btn:active { transform: scale(0.97); }
   .btn.primary { background: var(--primary); color: white; font-weight: 600; }
-  .btn.danger { background: var(--danger); color: white; }
+  .btn.danger { background: #f2f2f2; color: #111; }
   .icon { min-width: 52px; padding: 12px; text-align: center; }
   .hidden { display: none; }
   
@@ -111,14 +111,14 @@
     flex: 0 0 auto;
     padding: 10px 12px;
     border-radius: 12px;
-    background: #f4f6fb;
-    border: 1px solid #e7efff;
+    background: #f2f2f2;
+    border: 0;
     min-width: 96px;
     text-align: center;
     font-size: 15px;
     transition: background 0.2s;
   }
-  .favBtn:active { background: #e0eaff; }
+  .favBtn:active { background: #e0e0e0; }
   
   /* Recent shots list */
   .shotsList { margin-top: 8px; }
@@ -156,7 +156,7 @@
     font-weight: 600;
     transition: background 0.2s;
   }
-  .navBtn.active { background: #f2f4ff; }
+  .navBtn.active { background: #f2f2f2; }
   
   /* Overlay */
   .overlay {
@@ -199,7 +199,7 @@
     border: 1px solid #e0e0e0;
     text-align: center;
     min-height: 44px;
-    background: #fff;
+    background: #f2f2f2;
     font-size: 15px;
     transition: all 0.15s ease;
     /* iPhone 14 Pro optimizations */
@@ -222,16 +222,36 @@
     border-color: transparent;
     box-shadow: 0 2px 6px rgba(10,132,255,0.4);
   }
-  .pickerBtn.recommended { 
-    /* Use default styling - no special colors */
-    background: #fff;
-    border: 1px solid #e0e0e0;
-  }
-  .pickerBtn.more-btn {
-    /* Use default styling - no special colors */
-    background: #fff;
-    border: 1px solid #e0e0e0;
-  }
+  /* Replace existing .pickerBtn.recommended and .pickerBtn.more-btn rules with this */
+
+.pickerBtn.recommended {
+  /* keep a subtle emphasis but match the neutral picker style */
+  background: #f2f2f2;               /* same base as other pickers */
+  border: 1px solid #e0e0e0;         /* consistent border */
+  color: #111;                       /* same text color as normal pickers */
+  font-weight: 600;                  /* slightly bolder to indicate recommendation */
+  box-shadow: none;                  /* remove blue glow that made it stand out */
+}
+
+.pickerBtn.recommended:hover {
+  border-color: var(--primary);      /* slight highlight on hover */
+  background: #f7f9ff;               /* very subtle tint on hover */
+}
+
+/* Make the More... button visually consistent with other picker buttons */
+.pickerBtn.more-btn {
+  background: #f2f2f2;               /* neutral like other pickers */
+  border: 1px solid #e0e0e0;
+  color: #111;
+  font-weight: 600;
+}
+
+/* Optional: keep the same hover effect as other pickers */
+.pickerBtn.more-btn:hover {
+  border-color: #cfcfcf;
+  background: #efeff1;
+}
+
   
   /* Add Shot and Done & Next button styling */
   .add-shot-btn, .done-next-btn {
@@ -319,10 +339,4 @@
       overflow-y: auto;
     }
   }
-
-  
-
-
-
-
 
