@@ -61,8 +61,7 @@ const DEFAULTS = {
   outcomes: ['Good','Thin','Fat','Topped','Chunk','Hook','Slice','Push','Pull','Shank','Skull','Bladed','Duff','Other'],
   slopes: ['Flat','Uphill','Downhill','Ball Above Feet','Ball Below Feet','Tight Lie','Plugged','Other'],
   favorites: [
-    {club:'Putter', outcome:'Good', lie:'Green', stroke:'Putt', label:'Putt Good'},
-    {club:'Driver', outcome:'Slice', lie:'Fairway', stroke:'Full', label:'Driver Slice'},
+    // Default favorites removed - user can add their own
   ],
   // penalty types and their default penalty stroke count (PGA simplified)
   penaltyTypes: [
@@ -99,6 +98,54 @@ const recentShots = $('recentShots');
 const quickFavorites = $('quickFavorites');
 
 let CURRENT_ROUND = null;
+
+// --- Helper functions ---
+function createHole(number, par = 4) {
+  return {
+    id: uid(),
+    number,
+    par,
+    shots: [],
+    putts: 0,
+    penalties: []
+  };
+}
+
+function createRound(course, date, viewMode = 'all') {
+  return {
+    id: uid(),
+    date,
+    course,
+    holes: [],
+    notes: '',
+    createdAt: new Date().toISOString(),
+    currentHole: 0,
+    viewMode
+  };
+}
+
+function createShot(club, strokeType, outcome, lie = '', slope = '', notes = '') {
+  return {
+    id: uid(),
+    club,
+    strokeType,
+    lie,
+    slope,
+    outcome,
+    notes,
+    ts: new Date().toISOString()
+  };
+}
+
+function createPenalty(type, strokes = 1, note = '') {
+  return {
+    id: uid(),
+    type,
+    strokes,
+    note,
+    ts: new Date().toISOString()
+  };
+}
 
 // --- Local course pars (user provided) ---
 const LOCAL_COURSE = {
@@ -171,29 +218,64 @@ function computeRoundTotals(round){
   return { totalPar, totalStrokes, diff };
 }
 
-// --- UI: inject 'Use Local Course' button beside Start Round ---
-function injectLocalCourseButton(){
-  try{
-    const createCard = document.querySelector('.create-round .row.gap') || document.querySelector('.create-round .row');
-    if(!createCard) return;
-    if(document.getElementById('useLocalCourseBtn')) return;
-    const btn = document.createElement('button');
-    btn.id = 'useLocalCourseBtn';
-    btn.className = 'btn';
-    btn.textContent = 'Use Local Course';
-    btn.style.minWidth = '140px';
-    btn.onclick = ()=> createLocalCourseRound();
-    createCard.appendChild(btn);
-  }catch(e){}
+// compute FIR (Fairway in Regulation) - approach shots hit fairway before reaching green
+function computeFIR(hole){
+  const par = hole.par || 0;
+  if(par <= 3) return false; // No FIR on par 3s
+  if(!hole.shots || hole.shots.length === 0) return false;
+  
+  // For par 4: check if 2nd shot (approach) hits fairway
+  if(par === 4) {
+    const secondShot = hole.shots[1];
+    return secondShot && secondShot.lie === 'Fairway';
+  }
+  
+  // For par 5: check if 2nd shot hits fairway (required for FIR)
+  if(par === 5) {
+    const secondShot = hole.shots[1];
+    return secondShot && secondShot.lie === 'Fairway';
+  }
+  
+  return false;
 }
+
+// compute GIR (Green in Regulation) - reach green in regulation shots
+function computeGIR(hole){
+  const par = hole.par || 0;
+  if(par === 0) return false;
+  
+  const shots = hole.shots || [];
+  const puttShots = shots.filter(s => (s.strokeType||'').toLowerCase() === 'putt');
+  const nonPuttShots = shots.length - puttShots.length;
+  
+  // GIR means reaching green in regulation shots:
+  // Par 3: 1 shot to reach green
+  // Par 4: 2 shots to reach green  
+  // Par 5: 3 shots to reach green
+  if(par === 3) return nonPuttShots === 1;
+  if(par === 4) return nonPuttShots === 2;
+  if(par === 5) return nonPuttShots === 3;
+  
+  return false;
+}
+
+// compute 2-putt (0, 1, or 2 putts - all are good putting)
+function compute2Putt(hole){
+  const putts = hole.putts || 0;
+  return putts === 0 || putts === 1 || putts === 2;
+}
+
+// --- UI: Use Local Course button (already exists in HTML) ---
+// No need to inject - button already exists in HTML
 
 // create round pre-filled with LOCAL_COURSE (compact view by default)
 async function createLocalCourseRound(){
-  const courseName = LOCAL_COURSE.name;
-  const r = { id: uid(), date: new Date().toISOString().slice(0,10), course: courseName, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0, viewMode:'current' };
-  for(let i=0;i<LOCAL_COURSE.pars.length;i++){
-    r.holes.push({ id: uid(), number: i+1, par: LOCAL_COURSE.pars[i], shots: [], putts: 0, penalties: [] });
+  const r = createRound(LOCAL_COURSE.name, new Date().toISOString().slice(0,10), 'current');
+  
+  for(let i = 0; i < LOCAL_COURSE.pars.length; i++){
+    r.holes.push(createHole(i + 1, LOCAL_COURSE.pars[i]));
   }
+  
   await saveRound(r);
   CURRENT_ROUND = r;
   renderActiveRound();
@@ -204,16 +286,18 @@ async function createLocalCourseRound(){
 $('createRound').addEventListener('click', async ()=>{
   const course = $('course').value.trim() || 'Unknown';
   const date = $('roundDate').value || new Date().toISOString().slice(0,10);
-  const r = { id: uid(), date, course, holes: [], notes:'', createdAt:new Date().toISOString(), currentHole:0, viewMode:'all' };
-  r.holes.push({ id: uid(), number:1, par:4, shots:[], putts:0, penalties: [] });
+  const r = createRound(course, date, 'all');
+  r.holes.push(createHole(1, 4));
   await saveRound(r);
   CURRENT_ROUND = r;
   renderActiveRound();
   renderRoundsList();
 });
 
-// quick log overlay
-$('quickLogBtn').addEventListener('click', ()=> openQuickLog(CURRENT_ROUND));
+// Use Local Course button event listener
+$('useLocalCourseBtn').addEventListener('click', createLocalCourseRound);
+
+// Quick Log button removed - Add Shot button handles this functionality
 $('navRounds').addEventListener('click', ()=> { /* keep default main view (rounds) */ });
 $('navSettings').addEventListener('click', ()=> openSettings());
 
@@ -233,7 +317,7 @@ $('addHoleBtn').addEventListener('click', async ()=>{
     return alert('Maximum 18 holes reached.');
   }
   const holeNumber = (CURRENT_ROUND.holes.length || 0) + 1;
-  CURRENT_ROUND.holes.push({ id: uid(), number: holeNumber, par:4, shots:[], putts:0, penalties: [] });
+  CURRENT_ROUND.holes.push(createHole(holeNumber, 4));
   setActiveHoleIndex(CURRENT_ROUND, CURRENT_ROUND.holes.length - 1);
   CURRENT_ROUND.viewMode = 'current';
   await saveRound(CURRENT_ROUND);
@@ -244,16 +328,22 @@ $('addHoleBtn').addEventListener('click', async ()=>{
 $('exportBtn').addEventListener('click', async ()=>{
   const rounds = await loadAllRounds();
   if(!rounds.length){ alert('No rounds to export'); return; }
-  const rows = [['round_id','date','course','hole','par','shot_id','club','stroke','lie','slope','outcome','notes','timestamp','strokes','putts','penalties','shot_is_tee','currentHoleIndex','viewMode']];
+  const rows = [['round_id','date','course','hole','par','shot_id','club','stroke','lie','slope','outcome','notes','timestamp','strokes','putts','penalties','shot_is_tee','fir','gir','2putt','currentHoleIndex','viewMode']];
   rounds.forEach(r=>{
     r.holes.forEach(h=>{
       const strokes = computeHoleStrokes(h);
+      const fir = computeFIR(h) ? '1' : '0';
+      const gir = computeGIR(h) ? '1' : '0';
+      const twoPutt = compute2Putt(h) ? '1' : '0';
+      
       if(h.shots && h.shots.length){
         h.shots.forEach(s=>{
-          rows.push([r.id, r.date, r.course, h.number, h.par || '', s.id, s.club, s.strokeType, s.lie || '', s.slope || '', s.outcome, (s.notes||''), s.ts, strokes, h.putts||0, (h.penalties? h.penalties.length:0), (s.isTee? '1':'0'), r.currentHole||0, r.viewMode||'all']);
+          // Handle multiple outcomes in CSV
+          const outcome = s.outcome || '';
+          rows.push([r.id, r.date, r.course, h.number, h.par || '', s.id, s.club, s.strokeType, s.lie || '', s.slope || '', outcome, (s.notes||''), s.ts, strokes, h.putts||0, (h.penalties? h.penalties.length:0), (s.isTee? '1':'0'), fir, gir, twoPutt, r.currentHole||0, r.viewMode||'all']);
         });
       } else {
-        rows.push([r.id, r.date, r.course, h.number, h.par || '', '', '', '', '', '', '', '', '', strokes, h.putts||0, (h.penalties? h.penalties.length:0), '0', r.currentHole||0, r.viewMode||'all']);
+        rows.push([r.id, r.date, r.course, h.number, h.par || '', '', '', '', '', '', '', '', '', strokes, h.putts||0, (h.penalties? h.penalties.length:0), '0', fir, gir, twoPutt, r.currentHole||0, r.viewMode||'all']);
       }
     });
   });
@@ -299,8 +389,7 @@ async function renderRoundsList(){
   // Insert the rounds list once
   createCard.insertAdjacentElement('afterend', listRoot);
 
-  // Ensure the "Use Local Course" button is present after the rounds list is rendered
-  injectLocalCourseButton();
+  // Button already exists in HTML - no need to inject
 
   // attach handlers
   listRoot.querySelectorAll('button[data-action="open"]').forEach(b=>{
@@ -428,8 +517,8 @@ function renderActiveRound(){
     <div class="muted small" style="margin-top:8px">${(h.shots||[]).length} shots • Putts: ${h.putts||0} • Penalties: ${penCount}</div>
     <div class="muted small" style="margin-top:6px">Penalties: ${penList}</div>
     <div style="margin-top:12px" class="row gap">
-      <button class="btn" style="flex:1" onclick="openDetailedShotFormByIdSimple()">Add Shot</button>
-      <button class="btn" style="flex:1" onclick="advanceHoleAndSave()">Done & Next</button>
+      <button class="add-shot-btn" onclick="openDetailedShotFormByIdSimple()">Add Shot</button>
+      <button class="done-next-btn" onclick="advanceHoleAndSave()">Done & Next</button>
     </div>`;
     recentShots.appendChild(col);
 
@@ -519,21 +608,22 @@ async function quickLogFromFavorite(fav){
   if(!CURRENT_ROUND) return alert('No active round. Start one first.');
   const hole = getActiveHole(CURRENT_ROUND);
   if(!hole) return alert('Active hole not found');
-  const shot = {
-    id: uid(),
-    club: fav.club,
-    lie: fav.lie || '',
-    slope: fav.slope || '',
-    strokeType: fav.stroke || fav.strokeType || 'Full',
-    outcome: fav.outcome,
-    notes: fav.notes||'',
-    ts: new Date().toISOString()
-  };
+  
+  const shot = createShot(
+    fav.club,
+    fav.stroke || fav.strokeType || 'Full',
+    fav.outcome,
+    fav.lie || '',
+    fav.slope || '',
+    fav.notes || ''
+  );
+  
   // mark tee if first shot on hole
   hole.shots = hole.shots || [];
   if(!hole.shots.length){
     shot.isTee = true;
-    if(!shot.lie) shot.lie = 'Tee';
+    shot.lie = 'Tee';  // Always tee for first shot
+    shot.slope = 'Flat';  // Always flat for first shot
   }
   hole.shots.push(shot);
   hole.penalties = hole.penalties || [];
@@ -541,180 +631,59 @@ async function quickLogFromFavorite(fav){
   renderActiveRound();
 }
 
-// open quick log overlay
-function openQuickLog(round){
-  if(!round) return alert('No active round. Start one first.');
-  overlay.innerHTML = '';
-  overlay.classList.remove('hidden');
-  const activeHole = getActiveHole(round);
-  const form = document.createElement('div');
-  form.className = 'form';
-  form.innerHTML = `<h3>Quick Log — Hole ${activeHole ? activeHole.number : 1}</h3>
-    <div class="smallNote">Tap club → stroke → outcome → lie → slope → Save</div>
-    <div style="height:8px"></div>
-
-    <div>
-      <label class="small">Club</label>
-      <div id="clubGrid" class="pickerGrid"></div>
-    </div>
-    <div style="height:8px"></div>
-
-    <div>
-      <label class="small">Stroke</label>
-      <div id="strokeGrid" class="pickerGrid"></div>
-    </div>
-    <div style="height:8px"></div>
-
-    <div>
-      <label class="small">Outcome</label>
-      <div id="outGrid" class="pickerGrid"></div>
-    </div>
-    <div style="height:8px"></div>
-
-    <div>
-      <label class="small">Lie (where you hit)</label>
-      <div id="lieGrid" class="pickerGrid"></div>
-    </div>
-    <div style="height:8px"></div>
-
-    <div>
-      <label class="small">Slope / Lie type</label>
-      <div id="slopeGrid" class="pickerGrid"></div>
-    </div>
-
-    <div style="height:8px"></div>
-
-    <div>
-      <label class="small">Add Penalty (optional)</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <select id="quickPenaltySelect" class="input" style="flex:1"></select>
-        <input id="quickPenaltyNote" class="input" placeholder="Note (optional)" style="width:160px"/>
-        <button id="addQuickPenaltyBtn" class="btn">Add</button>
-      </div>
-    </div>
-
-    <div style="height:8px"></div>
-    <input id="noteInput" class="input" placeholder="Short note (e.g. tight lie, wind left)" />
-    <div class="row gap" style="margin-top:10px">
-      <button id="saveShot" class="btn primary">Save</button>
-      <button id="cancelShot" class="btn">Cancel</button>
-    </div>`;
-  overlay.appendChild(form);
-
-  // build pickers
-  const cg = form.querySelector('#clubGrid');
-  CFG.clubs.forEach(club=>{
-    const b = document.createElement('button'); b.className='pickerBtn'; b.textContent = club; b.onclick = ()=> selectPicker('club',club,b);
-    cg.appendChild(b);
-  });
-
-  const sg = form.querySelector('#strokeGrid');
-  CFG.strokes.forEach(st=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=st; b.onclick=()=>selectPicker('stroke',st,b); sg.appendChild(b); });
-
-  const og = form.querySelector('#outGrid');
-  CFG.outcomes.forEach(o=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=o; b.onclick=()=>selectPicker('outcome',o,b); og.appendChild(b); });
-
-  const lg = form.querySelector('#lieGrid');
-  CFG.lies.forEach(l=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=l; b.onclick=()=>selectPicker('lie',l,b); lg.appendChild(b); });
-
-  const slg = form.querySelector('#slopeGrid');
-  CFG.slopes.forEach(s=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=s; b.onclick=()=>selectPicker('slope',s,b); slg.appendChild(b); });
-
-  // penalty select
-  const psel = form.querySelector('#quickPenaltySelect');
-  (CFG.penaltyTypes || []).forEach(p=>{
-    const opt = document.createElement('option'); opt.value = p.key; opt.textContent = p.label + (p.strokes ? ` (+${p.strokes})` : '');
-    psel.appendChild(opt);
-  });
-  const addQuickPenaltyBtn = form.querySelector('#addQuickPenaltyBtn');
-  addQuickPenaltyBtn.onclick = ()=>{
-    const key = psel.value;
-    const pt = (CFG.penaltyTypes || []).find(x=>x.key===key);
-    if(!pt) return alert('Select a penalty type');
-    // keep a temporary penalties array on the form state
-    form._tmpPenalties = form._tmpPenalties || [];
-    form._tmpPenalties.push({ id: uid(), type: pt.key, strokes: pt.strokes || 1, ts: new Date().toISOString(), note: form.querySelector('#quickPenaltyNote').value||'' });
-    form.querySelector('#quickPenaltyNote').value = '';
-    // update UI to show current penalties
-    updateQuickPenaltyList();
-  };
-  function updateQuickPenaltyList(){
-    // remove existing indicator if any
-    const existing = form.querySelector('.quick-pen-list');
-    if(existing) existing.remove();
-    const list = document.createElement('div'); list.className = 'quick-pen-list muted small'; list.style.marginTop = '8px';
-    const tmp = form._tmpPenalties || [];
-    if(!tmp.length){
-      list.textContent = 'No penalties added';
-    } else {
-      list.textContent = 'Penalties: ' + tmp.map(p=>`${p.type}${p.note?(' ('+p.note+')') : ''}`).join(', ');
-    }
-    addQuickPenaltyBtn.parentElement.parentElement.appendChild(list);
-  }
-  updateQuickPenaltyList();
-
-  // keep track of selections
-  const selection = { club: null, stroke: null, outcome: null, lie: null, slope: null };
-
-  function selectPicker(type, value, btn){
-    selection[type] = value;
-    let gridId = '#clubGrid';
-    if(type === 'stroke') gridId = '#strokeGrid';
-    else if(type === 'outcome') gridId = '#outGrid';
-    else if(type === 'lie') gridId = '#lieGrid';
-    else if(type === 'slope') gridId = '#slopeGrid';
-    document.querySelectorAll(gridId + ' .pickerBtn').forEach(x=>x.classList.remove('sel'));
-    btn.classList.add('sel');
-  }
-
-  form.querySelector('#cancelShot').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
-  form.querySelector('#saveShot').onclick = async ()=>{
-    if(!selection.club || !selection.stroke || !selection.outcome){
-      return alert('Select club, stroke and outcome first (three taps).');
-    }
-    const hole = getActiveHole(round);
-    if(!hole) return alert('Active hole not found.');
-    // ensure penalty array exists
-    hole.penalties = hole.penalties || [];
-    const shot = {
-      id: uid(),
-      club: selection.club,
-      strokeType: selection.stroke,
-      lie: selection.lie || '',
-      slope: selection.slope || '',
-      outcome: selection.outcome,
-      notes: form.querySelector('#noteInput').value||'',
-      ts: new Date().toISOString()
-    };
-    // mark tee if first shot on hole
-    hole.shots = hole.shots || [];
-    if(!hole.shots.length){
-      shot.isTee = true;
-      if(!shot.lie) shot.lie = 'Tee';
-    }
-    hole.shots.push(shot);
-    // attach any temporary penalties the user added in quick log
-    if(form._tmpPenalties && form._tmpPenalties.length){
-      hole.penalties = (hole.penalties || []).concat(form._tmpPenalties);
-    }
-    await saveRound(round);
-    overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
-  };
-}
+// Quick Log function removed - Add Shot button handles this functionality
 
 // detailed shot form used by hole buttons (same as before)
 function openDetailedShotForm(round,hole){
   overlay.innerHTML = '';
   overlay.classList.remove('hidden');
   const form = document.createElement('div'); form.className = 'form';
+  
+  // Check if this is the first shot on the hole
+  const isFirstShot = !hole.shots || hole.shots.length === 0;
+  const par = hole.par || 4;
+  
+  // Smart club recommendations based on par
+  let recommendedClubs = [];
+  if(isFirstShot) {
+    if(par <= 3) {
+      // Par 3: 6i to GW
+      recommendedClubs = ['6-iron', '7-iron', '8-iron', '9-iron', 'PW', 'GW'];
+    } else {
+      // Par 4/5: Driver to 4-iron
+      recommendedClubs = ['Driver', '3-wood', '5-wood', '3-iron', '4-iron'];
+    }
+  }
+  
   // build penalty options html for select in the form
   let penaltyOptionsHTML = '';
   (CFG.penaltyTypes || []).forEach(p=>{
     penaltyOptionsHTML += `<option value="${p.key}">${p.label}${p.strokes?(' (+'+p.strokes+')') : ''}</option>`;
   });
 
-  form.innerHTML = `<h3>Shot — Hole ${hole.number}</h3>
-    <label class="small">Club <div id="dclub" class="pickerGrid"></div></label>
+  // Show existing shots if any
+  const existingShotsHTML = (hole.shots && hole.shots.length) ? 
+    `<div style="margin-bottom:16px">
+      <label class="small">Existing Shots (click to edit)</label>
+      <div id="existingShots" style="max-height:200px;overflow-y:auto;border:1px solid #ddd;border-radius:8px;padding:8px">
+        ${hole.shots.map((shot, idx) => `
+          <div class="shot-item" style="display:flex;justify-content:space-between;align-items:center;padding:6px;border-bottom:1px solid #eee;cursor:pointer" data-shot-id="${shot.id}">
+            <div>
+              <strong>${shot.club}</strong> • ${shot.strokeType} • ${shot.outcome}
+              <div class="muted small">${shot.lie} • ${shot.slope} ${shot.notes ? '• ' + shot.notes : ''}</div>
+            </div>
+            <div>
+              <button class="btn small" onclick="editShot('${shot.id}')" style="padding:4px 8px;font-size:12px">Edit</button>
+              <button class="btn small danger" onclick="deleteShot('${shot.id}')" style="padding:4px 8px;font-size:12px;margin-left:4px">×</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>` : '';
+
+  form.innerHTML = `<h3>Shot — Hole ${hole.number} (Par ${par})</h3>
+    ${existingShotsHTML}
+    <label class="small">Club ${isFirstShot ? `(${par <= 3 ? 'Par 3' : 'Par 4/5'} recommendations)` : ''} <div id="dclub" class="pickerGrid"></div></label>
     <label class="small">Stroke <div id="dstroke" class="pickerGrid"></div></label>
     <label class="small">Lie <div id="dlie" class="pickerGrid"></div></label>
     <label class="small">Slope <div id="dslope" class="pickerGrid"></div></label>
@@ -734,7 +703,7 @@ function openDetailedShotForm(round,hole){
     </div>
 
     <div class="row gap" style="margin-top:10px">
-      <button id="save" class="btn primary">Save</button>
+      <button id="save" class="btn primary">Add Shot</button>
       <button id="cancel" class="btn">Cancel</button>
       <button id="addPutt" class="btn">+Putt</button>
       <button id="lostBall" class="btn" title="PGA: stroke-and-distance">Lost Ball (PGA)</button>
@@ -742,22 +711,123 @@ function openDetailedShotForm(round,hole){
   overlay.appendChild(form);
 
   const dclub = form.querySelector('#dclub');
-  CFG.clubs.forEach(c=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=c; b.onclick=()=>select('club',c,b); dclub.appendChild(b); });
+  
+  // Smart club selection for first shots
+  if(isFirstShot && recommendedClubs.length > 0) {
+    // Show recommended clubs first
+    recommendedClubs.forEach(c=>{ 
+      if(CFG.clubs.includes(c)) {
+        const b=document.createElement('button'); 
+        b.className='pickerBtn recommended'; 
+        b.textContent=c; 
+        b.onclick=()=>select('club',c,b); 
+        dclub.appendChild(b); 
+      }
+    });
+    
+    // Add "More" button to show all clubs
+    const moreBtn = document.createElement('button');
+    moreBtn.className = 'pickerBtn more-btn';
+    moreBtn.textContent = 'More...';
+    moreBtn.onclick = () => {
+      moreBtn.style.display = 'none';
+      // Show remaining clubs
+      CFG.clubs.forEach(c => {
+        if(!recommendedClubs.includes(c)) {
+          const b = document.createElement('button');
+          b.className = 'pickerBtn';
+          b.textContent = c;
+          b.onclick = () => select('club', c, b);
+          dclub.appendChild(b);
+        }
+      });
+    };
+    dclub.appendChild(moreBtn);
+  } else {
+    // Show all clubs for non-first shots
+    CFG.clubs.forEach(c=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=c; b.onclick=()=>select('club',c,b); dclub.appendChild(b); });
+  }
   const dstroke = form.querySelector('#dstroke');
   CFG.strokes.forEach(s=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=s; b.onclick=()=>select('stroke',s,b); dstroke.appendChild(b); });
   const dlie = form.querySelector('#dlie');
-  CFG.lies.forEach(l=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=l; b.onclick=()=>select('lie',l,b); dlie.appendChild(b); });
+  
+  // Filter lies based on shot number and penalties
+  let availableLies = CFG.lies;
+  if(!isFirstShot) {
+    // Check if there are any penalties in the hole
+    const hasPenalties = hole.penalties && hole.penalties.length > 0;
+    if(!hasPenalties) {
+      // Remove 'Tee' option for non-first shots unless there are penalties
+      availableLies = CFG.lies.filter(lie => lie !== 'Tee');
+    }
+  }
+  
+  availableLies.forEach(l=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=l; b.onclick=()=>select('lie',l,b); dlie.appendChild(b); });
   const dslope = form.querySelector('#dslope');
   CFG.slopes.forEach(s=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=s; b.onclick=()=>select('slope',s,b); dslope.appendChild(b); });
+  
+  // Auto-select and lock tee lie and flat slope for first shots only
+  if(isFirstShot) {
+    // Auto-select "Tee" lie and lock it
+    setTimeout(() => {
+      const teeBtn = dlie.querySelector('button');
+      if(teeBtn && teeBtn.textContent === 'Tee') {
+        select('lie', 'Tee', teeBtn);
+        // Lock the lie selection for tee shots
+        dlie.querySelectorAll('button').forEach(btn => {
+          btn.style.pointerEvents = 'none';
+          btn.style.opacity = '0.5';
+        });
+        teeBtn.style.pointerEvents = 'auto';
+        teeBtn.style.opacity = '1';
+      }
+    }, 200);
+    
+    // Auto-select "Flat" slope and lock it
+    setTimeout(() => {
+      const flatBtn = dslope.querySelector('button');
+      if(flatBtn && flatBtn.textContent === 'Flat') {
+        select('slope', 'Flat', flatBtn);
+        // Lock the slope selection for tee shots
+        dslope.querySelectorAll('button').forEach(btn => {
+          btn.style.pointerEvents = 'none';
+          btn.style.opacity = '0.5';
+        });
+        flatBtn.style.pointerEvents = 'auto';
+        flatBtn.style.opacity = '1';
+      }
+    }, 200);
+  }
+  // For non-first shots, all lie and slope options are available (including Tee for penalties)
   const dout = form.querySelector('#dout');
-  CFG.outcomes.forEach(o=>{ const b=document.createElement('button'); b.className='pickerBtn'; b.textContent=o; b.onclick=()=>select('outcome',o,b); dout.appendChild(b); });
+  CFG.outcomes.forEach(o=>{ 
+    const b=document.createElement('button'); 
+    b.className='pickerBtn'; 
+    b.textContent=o; 
+    b.onclick=()=>selectMultiple('outcome',o,b); 
+    dout.appendChild(b); 
+  });
 
-  const selection = { club:null, stroke:null, lie:null, slope:null, outcome:null };
+  const selection = { club:null, stroke:null, lie:null, slope:null, outcome:[] };
   function select(k,v,btn){
     selection[k]=v;
     const gridId = btn.parentElement.id;
     document.querySelectorAll('#'+gridId+' .pickerBtn').forEach(x=>x.classList.remove('sel'));
     btn.classList.add('sel');
+  }
+  
+  function selectMultiple(k,v,btn){
+    if(!selection[k]) selection[k] = [];
+    const index = selection[k].indexOf(v);
+    if(index > -1) {
+      // Remove if already selected
+      selection[k].splice(index, 1);
+      btn.classList.remove('sel');
+    } else {
+      // Add if not selected
+      selection[k].push(v);
+      btn.classList.add('sel');
+    }
   }
 
   form.querySelector('#cancel').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
@@ -776,7 +846,7 @@ function openDetailedShotForm(round,hole){
     const note = form.querySelector('#penaltyNote').value||'';
     const pt = (CFG.penaltyTypes || []).find(x=>x.key === sel);
     if(!pt) return alert('Invalid penalty selected');
-    hole.penalties.push({ id: uid(), type: pt.key, strokes: pt.strokes || 1, ts: new Date().toISOString(), note });
+    hole.penalties.push(createPenalty(pt.key, pt.strokes || 1, note));
     await saveRound(round);
     form.querySelector('#penList').textContent = hole.penalties.map(p=>p.type+(p.note?(' ('+p.note+')') : '')).join(', ');
     form.querySelector('#penaltyNote').value = '';
@@ -790,34 +860,89 @@ function openDetailedShotForm(round,hole){
     }
     // add Lost Ball penalty type (if exists in CFG) else fallback
     const pt = (CFG.penaltyTypes || []).find(x=>x.key==='Lost Ball') || (CFG.penaltyTypes||[])[0];
-    hole.penalties.push({ id: uid(), type: pt.key, strokes: pt.strokes || 1, ts: new Date().toISOString(), note: 'Lost ball recorded' });
+    hole.penalties.push(createPenalty(pt.key, pt.strokes || 1, 'Lost ball recorded'));
     await saveRound(round);
     alert('Lost Ball recorded: +1 penalty stroke (stroke-and-distance). You should replay from the appropriate previous spot/tee as required by the rules.');
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
 
   form.querySelector('#save').onclick = async ()=>{
-    if(!selection.club || !selection.stroke || !selection.outcome){
-      return alert('Select club, stroke and outcome first.');
+    if(!selection.club || !selection.stroke || !selection.outcome || selection.outcome.length === 0){
+      return alert('Select club, stroke and at least one outcome first.');
     }
     hole.penalties = hole.penalties || [];
-    const shot = {
-      id: uid(),
-      club: selection.club,
-      strokeType: selection.stroke,
-      lie: selection.lie || '',
-      slope: selection.slope || '',
-      outcome: selection.outcome,
-      notes: form.querySelector('#notes').value || '',
-      ts: new Date().toISOString()
-    };
+    const shot = createShot(
+      selection.club,
+      selection.stroke,
+      Array.isArray(selection.outcome) ? selection.outcome.join(', ') : selection.outcome,
+      selection.lie || '',
+      selection.slope || '',
+      form.querySelector('#notes').value || ''
+    );
     // auto-assign tee if first shot of hole
     hole.shots = hole.shots || [];
     if(!hole.shots.length){
       shot.isTee = true;
-      if(!shot.lie) shot.lie = 'Tee';
+      shot.lie = 'Tee';  // Always tee for first shot
+      shot.slope = 'Flat';  // Always flat for first shot
+      // Override any user selection for first shots
+      selection.lie = 'Tee';
+      selection.slope = 'Flat';
     }
     hole.shots.push(shot);
+    await saveRound(round);
+    overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
+  };
+
+  // Add edit and delete shot functions to global scope
+  window.editShot = async function(shotId) {
+    const shot = hole.shots.find(s => s.id === shotId);
+    if (!shot) return;
+    
+    // Pre-fill form with existing shot data
+    const clubBtn = form.querySelector(`#dclub button[onclick*="${shot.club}"]`);
+    if (clubBtn) select('club', shot.club, clubBtn);
+    
+    const strokeBtn = form.querySelector(`#dstroke button[onclick*="${shot.strokeType}"]`);
+    if (strokeBtn) select('stroke', shot.strokeType, strokeBtn);
+    
+    const lieBtn = form.querySelector(`#dlie button[onclick*="${shot.lie}"]`);
+    if (lieBtn) select('lie', shot.lie, lieBtn);
+    
+    const slopeBtn = form.querySelector(`#dslope button[onclick*="${shot.slope}"]`);
+    if (slopeBtn) select('slope', shot.slope, slopeBtn);
+    
+    const outcomeBtn = form.querySelector(`#dout button[onclick*="${shot.outcome}"]`);
+    if (outcomeBtn) select('outcome', shot.outcome, outcomeBtn);
+    
+    form.querySelector('#notes').value = shot.notes || '';
+    
+    // Change save button to update mode
+    const saveBtn = form.querySelector('#save');
+    saveBtn.textContent = 'Update Shot';
+    saveBtn.onclick = async () => {
+      if(!selection.club || !selection.stroke || !selection.outcome){
+        return alert('Select club, stroke and outcome first.');
+      }
+      
+      // Update existing shot
+      shot.club = selection.club;
+      shot.strokeType = selection.stroke;
+      shot.lie = selection.lie || '';
+      shot.slope = selection.slope || '';
+      shot.outcome = selection.outcome;
+      shot.notes = form.querySelector('#notes').value || '';
+      shot.ts = new Date().toISOString();
+      
+      await saveRound(round);
+      overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
+    };
+  };
+
+  window.deleteShot = async function(shotId) {
+    if (!confirm('Delete this shot?')) return;
+    
+    hole.shots = hole.shots.filter(s => s.id !== shotId);
     await saveRound(round);
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
@@ -912,8 +1037,7 @@ function openSettings(){
     }
   }
 
-  // inject 'Use Local Course' button
-  injectLocalCourseButton();
+  // Button already exists in HTML - no need to inject
 
   await renderRoundsList();
   renderActiveRound();
@@ -925,8 +1049,17 @@ function openScorecardOverlay(round){
   overlay.innerHTML = ''; overlay.classList.remove('hidden');
   const totals = computeRoundTotals(round);
   const div = document.createElement('div'); div.className='form';
+  // Calculate statistics
+  let firCount = 0, girCount = 0, twoPuttCount = 0;
+  (round.holes || []).forEach(h => {
+    if(computeFIR(h)) firCount++;
+    if(computeGIR(h)) girCount++;
+    if(compute2Putt(h)) twoPuttCount++;
+  });
+
   let html = `<h3>Scorecard — ${round.course} (${round.date})</h3>
     <div class="muted small">Total: ${totals.totalStrokes} • Par ${totals.totalPar} • ${totals.diff>0? '+'+totals.diff : (totals.diff<0? totals.diff : 'E')}</div>
+    <div class="muted small">FIR: ${firCount}/${round.holes.length} • GIR: ${girCount}/${round.holes.length} • 2-Putts: ${twoPuttCount}</div>
     <div style="height:12px"></div>
     <table style="width:100%;border-collapse:collapse">
       <thead>
@@ -935,7 +1068,9 @@ function openScorecardOverlay(round){
           <th style="padding:6px">Par</th>
           <th style="padding:6px">Strokes</th>
           <th style="padding:6px">Putts</th>
-          <th style="padding:6px">Penalties</th>
+          <th style="padding:6px">FIR</th>
+          <th style="padding:6px">GIR</th>
+          <th style="padding:6px">2-Putt</th>
           <th style="padding:6px">Result</th>
         </tr>
       </thead>
@@ -943,12 +1078,17 @@ function openScorecardOverlay(round){
   (round.holes || []).forEach(h=>{
     const strokes = computeHoleStrokes(h);
     const res = holeResult(h);
+    const fir = computeFIR(h) ? '✓' : '✗';
+    const gir = computeGIR(h) ? '✓' : '✗';
+    const twoPutt = compute2Putt(h) ? '✓' : '✗';
     html += `<tr>
       <td style="padding:6px">${h.number}</td>
       <td style="padding:6px">${h.par||'-'}</td>
       <td style="padding:6px">${strokes}</td>
       <td style="padding:6px">${h.putts||0}</td>
-      <td style="padding:6px">${(h.penalties? h.penalties.length: 0)}</td>
+      <td style="padding:6px;text-align:center;color:${computeFIR(h)?'green':'red'}">${fir}</td>
+      <td style="padding:6px;text-align:center;color:${computeGIR(h)?'green':'red'}">${gir}</td>
+      <td style="padding:6px;text-align:center;color:${compute2Putt(h)?'green':'red'}">${twoPutt}</td>
       <td style="padding:6px">${res}</td>
     </tr>`;
   });
@@ -963,10 +1103,13 @@ function openScorecardOverlay(round){
   document.getElementById('closeScorecard').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
   document.getElementById('exportScorecardCSV').onclick = ()=> {
     // reuse export logic but limited to this round
-    const rows = [['hole','par','strokes','putts','penalties','result']];
+    const rows = [['hole','par','strokes','putts','penalties','fir','gir','2putt','result']];
     (round.holes||[]).forEach(h=>{
       const strokes = computeHoleStrokes(h);
-      rows.push([h.number, h.par||'', strokes, h.putts||0, (h.penalties? h.penalties.length:0), holeResult(h)]);
+      const fir = computeFIR(h) ? 'Yes' : 'No';
+      const gir = computeGIR(h) ? 'Yes' : 'No';
+      const twoPutt = compute2Putt(h) ? 'Yes' : 'No';
+      rows.push([h.number, h.par||'', strokes, h.putts||0, (h.penalties? h.penalties.length:0), fir, gir, twoPutt, holeResult(h)]);
     });
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], {type:'text/csv'});

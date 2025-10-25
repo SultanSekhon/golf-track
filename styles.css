@@ -26,10 +26,15 @@
     touch-action: manipulation;
     font-size: 17px;
     line-height: 1.4;
+    /* iPhone 14 Pro optimizations */
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
   }
 
     input, textarea { 
         -webkit-user-select: text;
+        -moz-user-select: text;
+        -ms-user-select: text;
         user-select: text;
     }
 
@@ -185,6 +190,8 @@
     grid-template-columns: repeat(auto-fill,minmax(90px,1fr));
     gap: 8px;
     margin-top: 6px;
+    /* Mobile optimization */
+    -webkit-overflow-scrolling: touch;
   }
   .pickerBtn {
     padding: 12px;
@@ -195,6 +202,12 @@
     background: #fff;
     font-size: 15px;
     transition: all 0.15s ease;
+    /* iPhone 14 Pro optimizations */
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .pickerBtn:hover {
     border-color: var(--primary);
@@ -208,6 +221,45 @@
     color: #fff;
     border-color: transparent;
     box-shadow: 0 2px 6px rgba(10,132,255,0.4);
+  }
+  .pickerBtn.recommended { 
+    /* Use default styling - no special colors */
+    background: #fff;
+    border: 1px solid #e0e0e0;
+  }
+  .pickerBtn.more-btn {
+    /* Use default styling - no special colors */
+    background: #fff;
+    border: 1px solid #e0e0e0;
+  }
+  
+  /* Add Shot and Done & Next button styling */
+  .add-shot-btn, .done-next-btn {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+  }
+  
+  .add-shot-btn:hover, .done-next-btn:hover {
+    background: #0056b3;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(10, 132, 255, 0.3);
+  }
+  
+  .add-shot-btn:active, .done-next-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 6px rgba(10, 132, 255, 0.2);
   }
   
   .smallNote {
@@ -237,6 +289,35 @@
     .bottomNav { background: rgba(28,28,30,0.95); }
     .favBtn { background: #2c2c2e; border-color: #3a3a3c; color: #f9f9f9; }
     .shotItem { background: #2c2c2e; border-color: #3a3a3c; }
+  }
+
+  /* iPhone 14 Pro specific optimizations */
+  @media screen and (max-width: 430px) and (max-height: 932px) {
+    body {
+      font-size: 16px;
+      padding: env(safe-area-inset-top) 12px env(safe-area-inset-bottom);
+    }
+    .pickerGrid {
+      grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+      gap: 6px;
+    }
+    .pickerBtn {
+      padding: 10px 8px;
+      font-size: 14px;
+      min-height: 40px;
+    }
+    .btn {
+      padding: 12px 16px;
+      font-size: 16px;
+      min-height: 44px;
+    }
+    .overlay {
+      padding: 16px;
+    }
+    .form {
+      max-height: 90vh;
+      overflow-y: auto;
+    }
   }
 
   
