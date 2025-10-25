@@ -435,3 +435,46 @@ table th, table td {
   #overlay tbody tr:nth-child(even) { background: #17191d; }
 }
 
+/* 3) Add-Shot menu: equal button sizes + compact mobile fit */
+
+/* Make each picker grid create uniform rows and let buttons fill them */
+.pickerGrid {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  grid-auto-rows: 44px;            /* uniform height rows */
+}
+
+.pickerBtn {
+  height: 100%;                    /* fill the grid row height */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;             /* keep labels tidy */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Compact the section labels and spacing inside the overlay form */
+.form h3 { margin: 6px 0 10px; }
+.form label.small { display: block; margin-top: 8px; margin-bottom: 4px; }
+.form .pickerGrid + .pickerGrid { margin-top: 6px; }
+
+/* Mobile: tighter buttons, more columns to reduce vertical scrolling */
+@media (max-width: 430px) {
+  .pickerGrid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));  /* 4 columns on phones */
+    grid-auto-rows: 40px;                               /* slightly shorter rows */
+    gap: 6px;
+  }
+  .pickerBtn {
+    padding: 8px;
+    font-size: 13px;
+  }
+  /* Inputs inside the overlay are also tightened */
+  .form .input { padding: 10px 12px; font-size: 15px; }
+}
+
+/* If labels are still wrapping, allow a smaller text size at very small widths */
+@media (max-width: 360px) {
+  .pickerBtn { font-size: 12px; }
+}
+
