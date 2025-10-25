@@ -699,7 +699,7 @@ function openDetailedShotForm(round,hole){
         <input id="penaltyNote" class="input" placeholder="Note (optional)" style="width:160px"/>
         <button id="addPenaltyBtn" class="btn">Add Penalty</button>
       </div>
-      <div class="muted small" id="penList" style="margin-top:6px">${(hole.penalties && hole.penalties.length)? hole.penalties.map(p=>p.type+(p.note?(' ('+p.note+')') : '')).join(', ') : 'No penalties'}</div>
+      <div class="muted small" id="penList" style="margin-top:6px">${(hole.penalties && hole.penalties.length)? hole.penalties.map(p=>p.type+(p.note?(' ('+p.note+')') : '')).join(', '): 'No penalties'}</div>
     </div>
 
     <div class="row gap" style="margin-top:10px">
@@ -709,6 +709,18 @@ function openDetailedShotForm(round,hole){
       <button id="lostBall" class="btn" title="PGA: stroke-and-distance">Lost Ball (PGA)</button>
     </div>`;
   overlay.appendChild(form);
+
+  // ---------- FIX: helper to find picker buttons by visible text ----------
+  function findBtnByText(containerEl, txt) {
+    if (!containerEl) return null;
+    const needle = String(txt || '').trim().toLowerCase();
+    const btns = containerEl.querySelectorAll('button.pickerBtn');
+    for (const b of btns) {
+      if (b.textContent.trim().toLowerCase() === needle) return b;
+    }
+    return null;
+  }
+  // -----------------------------------------------------------------------
 
   const dclub = form.querySelector('#dclub');
   
@@ -894,43 +906,48 @@ function openDetailedShotForm(round,hole){
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
 
-  // Add edit and delete shot functions to global scope
+  // ---------- FIXED EDIT/DELETE LOGIC BELOW ----------
   window.editShot = async function(shotId) {
     const shot = hole.shots.find(s => s.id === shotId);
     if (!shot) return;
-    
-    // Pre-fill form with existing shot data
-    const clubBtn = form.querySelector(`#dclub button[onclick*="${shot.club}"]`);
+
+    // Pre-fill by matching button text (works because we attach handlers via JS, not inline attributes)
+    const clubBtn  = findBtnByText(dclub,  shot.club);
     if (clubBtn) select('club', shot.club, clubBtn);
     
-    const strokeBtn = form.querySelector(`#dstroke button[onclick*="${shot.strokeType}"]`);
+    const strokeBtn = findBtnByText(dstroke, shot.strokeType);
     if (strokeBtn) select('stroke', shot.strokeType, strokeBtn);
     
-    const lieBtn = form.querySelector(`#dlie button[onclick*="${shot.lie}"]`);
+    const lieBtn   = findBtnByText(dlie,   shot.lie);
     if (lieBtn) select('lie', shot.lie, lieBtn);
     
-    const slopeBtn = form.querySelector(`#dslope button[onclick*="${shot.slope}"]`);
+    const slopeBtn = findBtnByText(dslope, shot.slope);
     if (slopeBtn) select('slope', shot.slope, slopeBtn);
-    
-    const outcomeBtn = form.querySelector(`#dout button[onclick*="${shot.outcome}"]`);
-    if (outcomeBtn) select('outcome', shot.outcome, outcomeBtn);
+
+    // Outcome can be a comma-separated string; support multiple selections
+    const outcomes = Array.isArray(shot.outcome)
+      ? shot.outcome
+      : String(shot.outcome || '').split(',').map(s => s.trim()).filter(Boolean);
+    outcomes.forEach(o => {
+      const ob = findBtnByText(dout, o);
+      if (ob) selectMultiple('outcome', o, ob);
+    });
     
     form.querySelector('#notes').value = shot.notes || '';
     
-    // Change save button to update mode
+    // Change save button to update mode with stricter validation + normalized outcome
     const saveBtn = form.querySelector('#save');
     saveBtn.textContent = 'Update Shot';
     saveBtn.onclick = async () => {
-      if(!selection.club || !selection.stroke || !selection.outcome){
-        return alert('Select club, stroke and outcome first.');
+      if(!selection.club || !selection.stroke || !selection.outcome || selection.outcome.length === 0){
+        return alert('Select club, stroke and at least one outcome first.');
       }
       
-      // Update existing shot
       shot.club = selection.club;
       shot.strokeType = selection.stroke;
       shot.lie = selection.lie || '';
       shot.slope = selection.slope || '';
-      shot.outcome = selection.outcome;
+      shot.outcome = Array.isArray(selection.outcome) ? selection.outcome.join(', ') : (selection.outcome || '');
       shot.notes = form.querySelector('#notes').value || '';
       shot.ts = new Date().toISOString();
       
@@ -946,6 +963,7 @@ function openDetailedShotForm(round,hole){
     await saveRound(round);
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
+  // ---------- END FIXED EDIT/DELETE LOGIC ----------
 }
 
 // settings UI
@@ -1118,5 +1136,3 @@ function openScorecardOverlay(round){
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 }
-
-
