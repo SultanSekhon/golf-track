@@ -478,3 +478,113 @@ table th, table td {
   .pickerBtn { font-size: 12px; }
 }
 
+/* 4) Stats panel: colors, spacing, placement (bottom sheet) */
+#statsPanel {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 72px); /* clears bottom nav */
+  transform: translateX(-50%) translateY(8px);
+  width: min(900px, 92vw);
+  max-height: 70vh;
+  overflow: auto;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.18);
+  padding: 14px;
+  z-index: 1200;
+  /* subtle entrance */
+  opacity: 0;
+  transition: opacity .18s ease, transform .18s ease;
+}
+/* when JS toggles display to block, let it fade in on next frame */
+#statsPanel[style*="display: block"] {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* Place the button nicely; reuse existing .btn look */
+#showStatsBtn {
+  margin-top: 8px;
+}
+
+/* Tabs row inside stats */
+#statsPanel > div:first-child {
+  /* the tab bar wrapper created by live-stats */
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+/* Make the two tab buttons compact and distinct */
+#statsPanel .btn {
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+#statsPanel .btn:hover {
+  background: #eef0f3;
+}
+@media (prefers-color-scheme: dark) {
+  #statsPanel .btn:hover { background: #2a2b30; }
+}
+
+/* The little “Live refresh: 10s” text */
+#statsPanel .muted.small {
+  margin-left: auto;
+  opacity: .85;
+}
+
+/* Headings & blocks */
+#statsPanel h3 {
+  margin: 6px 0 8px;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+/* Lists -> tidy grid two-columns on wide; one column on phones */
+#statsPanel ul {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 6px 12px;
+}
+@media (max-width: 430px) {
+  #statsPanel ul { grid-template-columns: 1fr; }
+}
+
+/* Each key/value line */
+#statsPanel li {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8fafc;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+#statsPanel li strong { font-weight: 700; }
+#statsPanel li .small { opacity: .85; }
+@media (prefers-color-scheme: dark) {
+  #statsPanel li { background: #1f2227; }
+}
+
+/* Meta line (Shots/Holes/FIR etc.) */
+#statsPanel .muted.small + div,
+#statsPanel .muted.small {
+  margin-bottom: 6px;
+}
+
+/* On very small screens, pull panel a bit higher to avoid keyboard/nav overlap */
+@media (max-width: 430px) {
+  #statsPanel {
+    bottom: calc(env(safe-area-inset-bottom) + 80px);
+    width: 94vw;
+    padding: 12px;
+  }
+}
+
