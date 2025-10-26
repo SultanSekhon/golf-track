@@ -91,6 +91,22 @@ const CFG = getConfig();
 // --- UI helpers & elements ---
 const $ = id => document.getElementById(id);
 const overlay = $('overlay');
+// close overlay when tapping the dim backdrop
+overlay.addEventListener('click', (e) => {
+  if (e.target === overlay) {
+    overlay.classList.add('hidden');
+    overlay.innerHTML = '';
+  }
+});
+
+// close overlay with Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !overlay.classList.contains('hidden')) {
+    overlay.classList.add('hidden');
+    overlay.innerHTML = '';
+  }
+});
+
 const activeRoundSection = $('activeRound');
 const roundTitle = $('roundTitle');
 const roundMeta = $('roundMeta');
@@ -1137,6 +1153,7 @@ function openScorecardOverlay(round){
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 }
+
 
 
 
