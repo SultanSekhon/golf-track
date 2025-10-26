@@ -1,15 +1,4 @@
-/*
-  live-stats-app.js — Stats in Overlay (bottom sheet)
-
-  Changes:
-  - Renders Stats inside #overlay (same UX as Add Shot / Scorecard)
-  - Close options: ✕ button, tap outside, and Esc
-  - Auto-refresh (every 10s) only while overlay is open
-
-  Metrics shown:
-  - Stroke tab: total shots, shots by type, FIR/GIR/2-Putt rates, putting distribution
-  - Club tab: usage by club, tee shots by club
-*/
+/* live-stats-app.js — Stats as an overlay bottom sheet (tap-outside + Esc to close) */
 
 (function(){
   const BTN_ID = 'showStatsBtn';
@@ -17,16 +6,9 @@
   const STORE = 'rounds';
   const REFRESH_MS = 10000; // 10s
 
-  // Timer & overlay listeners so we can clean up on close
-  let refreshTimer = null;
-  let currentTab = 'stroke';
-  let escHandler = null;
-  let backdropHandler = null;
-
-  // Optional: set window.GOLFTRACK_LIVE_CSV_URL to also merge an external CSV feed
   const getLiveCsvUrl = () => window.GOLFTRACK_LIVE_CSV_URL || '';
 
-  // ---------------- CSV helpers ----------------
+  // CSV parser (quoted fields)
   function parseCSV(text){
     if(!text || !text.trim()) return { header: [], rows: [] };
     const lines = text.replace(/\r\n?/g, '\n').split('\n').filter(l=>l.length>0);
@@ -60,12 +42,12 @@
     return idx;
   }
 
-  // --------------- IndexedDB (read-only) ---------------
+  // IndexedDB (read-only)
   function openDB(){
     return new Promise((res,rej)=>{
       const req = indexedDB.open(DB_NAME,1);
       req.onsuccess = ()=> res(req.result);
-      req.onerror  = ()=> rej(req.error);
+      req.onerror = ()=> rej(req.error);
     });
   }
   async function loadAllRounds(){
@@ -74,19 +56,16 @@
       const tx = db.transaction(STORE,'readonly');
       const st = tx.objectStore(STORE).getAll();
       st.onsuccess = ()=> res(st.result || []);
-      st.onerror   = ()=> rej(st.error);
+      st.onerror = ()=> rej(st.error);
     });
   }
 
-  // --------------- Stat helpers (same logic as app.js) ---------------
   function computeHoleStrokes(hole){
     const shots = hole.shots || [];
     const totalShotEntries = shots.length;
     const puttShots = shots.filter(s => (s.strokeType||'').toLowerCase() === 'putt').length;
     const extraPutts = hole.putts || 0;
-    const penalties = (hole.penalties && hole.penalties.length)
-      ? hole.penalties.reduce((acc,p)=>acc + (p.strokes||1), 0)
-      : 0;
+    const penalties = (hole.penalties && hole.penalties.length) ? hole.penalties.reduce((acc,p)=>acc + (p.strokes||1), 0) : 0;
     const strokes = totalShotEntries + extraPutts + penalties - puttShots;
     return Math.max(strokes, totalShotEntries + penalties);
   }
@@ -117,7 +96,6 @@
     const strokeCounts = Object.create(null);
     const clubCounts = Object.create(null);
     const teeClubCounts = Object.create(null);
-
     let totalShots = 0;
     let putt0=0, putt1=0, putt2=0, putt3p=0;
     let firCount=0, girCount=0, twoPuttCount=0;
@@ -211,11 +189,7 @@
 
   function mergeStats(a,b){
     if(!a) return b; if(!b) return a;
-    const sumObj = (x,y)=>{
-      const out = {...x};
-      Object.entries(y).forEach(([k,v])=>{ out[k] = (out[k]||0)+v; });
-      return out;
-    };
+    const sumObj = (x,y)=>{ const out = {...x}; Object.entries(y).forEach(([k,v])=>{ out[k] = (out[k]||0)+v; }); return out; };
     return {
       totals: {
         totalShots: (a.totals.totalShots||0) + (b.totals.totalShots||0),
@@ -224,162 +198,68 @@
         girCount: (a.totals.girCount||0) + (b.totals.girCount||0),
         twoPuttCount: (a.totals.twoPuttCount||0) + (b.totals.twoPuttCount||0)
       },
-      strokes:  sumObj(a.strokes,b.strokes),
-      clubs:    sumObj(a.clubs,b.clubs),
+      strokes: sumObj(a.strokes,b.strokes),
+      clubs: sumObj(a.clubs,b.clubs),
       teeClubs: sumObj(a.teeClubs,b.teeClubs),
       putting: {
         putt0: (a.putting.putt0||0) + (b.putting.putt0||0),
         putt1: (a.putting.putt1||0) + (b.putting.putt1||0),
         putt2: (a.putting.putt2||0) + (b.putting.putt2||0),
-        putt3p:(a.putting.putt3p||0) + (b.putting.putt3p||0)
+        putt3p: (a.putting.putt3p||0) + (b.putting.putt3p||0)
       }
     };
   }
 
   function pct(part, total){ if(!total) return '0%'; return Math.round((part/total)*100) + '%'; }
 
-  // ---------------- Overlay plumbing ----------------
-  function getOverlay() {
-    return document.getElementById('overlay');
+  // ---------- Overlay-based UI ----------
+  function getOverlay(){ return document.getElementById('overlay'); }
+  function openOverlay(){ const ov = getOverlay(); ov.classList.remove('hidden'); return ov; }
+  function closeOverlay(){
+    const ov = getOverlay();
+    ov.classList.add('hidden');
+    ov.innerHTML = '';
   }
 
-  function openStatsOverlay(contentEl) {
-    const overlay = getOverlay();
-    if (!overlay) return;
-
-    // Clear & show overlay
-    overlay.innerHTML = '';
-    overlay.classList.remove('hidden');
-
-    // Bottom-sheet container using existing .form styling
+  function buildPanel(){
+    // Use the same bottom-sheet "form" container as other dialogs
     const sheet = document.createElement('div');
     sheet.className = 'form';
+    sheet.setAttribute('id','statsSheet');
 
-    // Header bar with title + close
-    const bar = document.createElement('div');
-    bar.style.display = 'flex';
-    bar.style.justifyContent = 'space-between';
-    bar.style.alignItems = 'center';
-    bar.style.marginBottom = '6px';
+    // Header with close button (×)
+    const header = document.createElement('div');
+    header.className = 'row between';
+    header.style.marginBottom = '6px';
+    header.innerHTML = `
+      <div style="font-weight:800">Live Stats</div>
+      <button class="iconBtn" id="statsCloseBtn" aria-label="Close" title="Close">✕</button>
+    `;
 
-    const h = document.createElement('h3');
-    h.textContent = 'Stats';
-    h.style.margin = '6px 0';
-
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'iconBtn';
-    closeBtn.setAttribute('aria-label', 'Close');
-    closeBtn.textContent = '✕';
-    closeBtn.onclick = closeStatsOverlay;
-
-    bar.appendChild(h);
-    bar.appendChild(closeBtn);
-
-    // Apply an id so your CSS (#statsPanel ...) still styles the inner content
-    contentEl.id = 'statsPanel';
-
-    // Assemble
-    sheet.appendChild(bar);
-    sheet.appendChild(contentEl);
-    overlay.appendChild(sheet);
-
-    // Tap outside to close
-    backdropHandler = (e) => {
-      // Only close if the click is on the backdrop (overlay), not inside the sheet
-      if (e.target === overlay) closeStatsOverlay();
-    };
-    overlay.addEventListener('click', backdropHandler);
-
-    // Esc to close
-    escHandler = (e) => {
-      if (e.key === 'Escape') closeStatsOverlay();
-    };
-    document.addEventListener('keydown', escHandler);
-  }
-
-  function closeStatsOverlay() {
-    // stop auto-refresh
-    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
-
-    const overlay = getOverlay();
-    if (!overlay) return;
-
-    // remove listeners
-    if (backdropHandler) {
-      overlay.removeEventListener('click', backdropHandler);
-      backdropHandler = null;
-    }
-    if (escHandler) {
-      document.removeEventListener('keydown', escHandler);
-      escHandler = null;
-    }
-
-    // hide & clear
-    overlay.classList.add('hidden');
-    overlay.innerHTML = '';
-  }
-
-  // ---------------- UI builders ----------------
-  function kvListWithPct(obj, total){
-    const ul = document.createElement('ul');
-    ul.style.listStyle = 'none';
-    ul.style.paddingLeft = '0';
-    const entries = Object.entries(obj).sort((a,b)=> b[1]-a[1]);
-    entries.forEach(([k,v])=>{
-      const li = document.createElement('li');
-      li.style.padding = '4px 0';
-      li.innerHTML = `<strong>${k}:</strong> ${v} <span class="muted small">(${pct(v,total)})</span>`;
-      ul.appendChild(li);
-    });
-    if(entries.length===0){
-      const li=document.createElement('li');
-      li.className='muted small';
-      li.textContent='No data';
-      ul.appendChild(li);
-    }
-    return ul;
-  }
-
-  function renderTabs(container){
+    // Tabs + content wrapper
     const tabs = document.createElement('div');
-    tabs.style.display = 'flex';
-    tabs.style.gap = '8px';
-    tabs.style.alignItems = 'center';
-    tabs.style.marginBottom = '8px';
+    tabs.style.display = 'flex'; tabs.style.gap = '8px'; tabs.style.alignItems = 'center'; tabs.style.marginBottom = '8px';
 
-    const strokeBtn = document.createElement('button');
-    strokeBtn.textContent = 'Stroke Stats';
-    strokeBtn.className='btn';
+    const strokeBtn = document.createElement('button'); strokeBtn.textContent = 'Stroke Stats'; strokeBtn.className='btn';
+    const clubBtn   = document.createElement('button'); clubBtn.textContent   = 'Club Stats';   clubBtn.className='btn';
+    const liveInfo  = document.createElement('div'); liveInfo.className='muted small'; liveInfo.style.marginLeft='auto'; liveInfo.textContent='Live refresh: 10s';
 
-    const clubBtn = document.createElement('button');
-    clubBtn.textContent = 'Club Stats';
-    clubBtn.className='btn';
-
-    const liveInfo = document.createElement('div');
-    liveInfo.style.marginLeft='auto';
-    liveInfo.className='muted small';
-    liveInfo.textContent = 'Live refresh: 10s';
-
-    tabs.appendChild(strokeBtn);
-    tabs.appendChild(clubBtn);
-    tabs.appendChild(liveInfo);
+    tabs.appendChild(strokeBtn); tabs.appendChild(clubBtn); tabs.appendChild(liveInfo);
 
     const content = document.createElement('div');
 
-    container.appendChild(tabs);
-    container.appendChild(content);
-    return { strokeBtn, clubBtn, content, liveInfo };
+    sheet.appendChild(header);
+    sheet.appendChild(tabs);
+    sheet.appendChild(content);
+
+    return { sheet, strokeBtn, clubBtn, content, closeBtnId: 'statsCloseBtn' };
   }
 
   function renderStroke(stats, mount){
     mount.innerHTML = '';
-    const h = document.createElement('h3');
-    h.textContent='Stroke Stats';
-    h.style.marginTop='0';
-    mount.appendChild(h);
+    const h = document.createElement('h3'); h.textContent='Stroke Stats'; h.style.marginTop='0'; mount.appendChild(h);
 
-    const meta = document.createElement('div');
-    meta.className='muted small';
+    const meta = document.createElement('div'); meta.className='muted small';
     const t = stats.totals;
     const firRate = pct(t.firCount, t.totalHoles);
     const girRate = pct(t.girCount, t.totalHoles);
@@ -387,54 +267,38 @@
     meta.textContent = `Shots: ${t.totalShots} • Holes: ${t.totalHoles} • FIR: ${t.firCount} (${firRate}) • GIR: ${t.girCount} (${girRate}) • 2-Putt Holes: ${t.twoPuttCount} (${twoRate})`;
     mount.appendChild(meta);
 
-    const s1 = document.createElement('div');
-    s1.style.marginTop='8px';
-    s1.innerHTML = '<strong>Shots by stroke type</strong>';
+    const s1 = document.createElement('div'); s1.style.marginTop='8px'; s1.innerHTML = '<strong>Shots by stroke type</strong>';
     s1.appendChild(kvListWithPct(stats.strokes, t.totalShots));
 
-    const s2 = document.createElement('div');
-    s2.style.marginTop='8px';
-    s2.innerHTML = '<strong>Putting distribution (per hole)</strong>';
+    const s2 = document.createElement('div'); s2.style.marginTop='8px'; s2.innerHTML = '<strong>Putting distribution (per hole)</strong>';
     const holes = t.totalHoles || 0;
-    s2.appendChild(kvListWithPct({
-      '0 putts': stats.putting.putt0,
-      '1 putt' : stats.putting.putt1,
-      '2 putts': stats.putting.putt2,
-      '3+ putts': stats.putting.putt3p
-    }, holes));
+    s2.appendChild(kvListWithPct({ '0 putts': stats.putting.putt0, '1 putt': stats.putting.putt1, '2 putts': stats.putting.putt2, '3+ putts': stats.putting.putt3p }, holes));
 
-    mount.appendChild(s1);
-    mount.appendChild(s2);
+    mount.appendChild(s1); mount.appendChild(s2);
   }
 
   function renderClub(stats, mount){
     mount.innerHTML = '';
-    const h = document.createElement('h3');
-    h.textContent='Club Stats';
-    h.style.marginTop='0';
-    mount.appendChild(h);
+    const h = document.createElement('h3'); h.textContent='Club Stats'; h.style.marginTop='0'; mount.appendChild(h);
 
     const t = stats.totals;
 
-    const s1 = document.createElement('div');
-    s1.style.marginTop='8px';
-    s1.innerHTML = '<strong>Usage by club</strong>';
+    const s1 = document.createElement('div'); s1.style.marginTop='8px'; s1.innerHTML = '<strong>Usage by club</strong>';
     s1.appendChild(kvListWithPct(stats.clubs, t.totalShots));
 
-    const s2 = document.createElement('div');
-    s2.style.marginTop='8px';
-    s2.innerHTML = '<strong>Tee shots by club</strong>';
+    const s2 = document.createElement('div'); s2.style.marginTop='8px'; s2.innerHTML = '<strong>Tee shots by club</strong>';
     s2.appendChild(kvListWithPct(stats.teeClubs, t.totalShots));
 
-    mount.appendChild(s1);
-    mount.appendChild(s2);
+    mount.appendChild(s1); mount.appendChild(s2);
   }
 
-  // ---------------- Wiring ----------------
+  let refreshTimer = null;
+  let currentTab = 'stroke';
+  let overlayClickHandler = null;
+  let escHandler = null;
+
   async function loadStats(){
-    // in-app rounds
     let stats = aggregateFromRounds(await loadAllRounds());
-    // optional CSV
     const url = getLiveCsvUrl();
     if(url){
       try{
@@ -445,55 +309,73 @@
           const statsCsv = aggregateFromCSV(parsed.header, parsed.rows);
           stats = mergeStats(stats, statsCsv);
         }
-      }catch(e){ /* ignore fetch errors for live CSV */ }
+      }catch(e){ /* ignore CSV fetch errors */ }
     }
     return stats;
   }
 
-  async function attach(){
-    const btn = document.getElementById(BTN_ID);
-    if (!btn) return; // safety if button not on page
+  async function openStats(){
+    const ov = openOverlay();
 
-    // Build content container fresh each time we open
-    function buildContent() {
-      const container = document.createElement('div');
-      // give it an id later in openStatsOverlay (so CSS #statsPanel applies)
-      const { strokeBtn, clubBtn, content } = renderTabs(container);
+    // Clear any existing content (and timers) before re-opening
+    if(refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; }
+    ov.innerHTML = '';
 
-      async function refresh(){
-        const stats = await loadStats();
-        if(currentTab === 'club') renderClub(stats, content);
-        else renderStroke(stats, content);
-      }
+    // Build sheet UI
+    const { sheet, strokeBtn, clubBtn, content, closeBtnId } = buildPanel();
+    ov.appendChild(sheet);
 
-      strokeBtn.onclick = ()=>{ currentTab='stroke'; refresh(); };
-      clubBtn.onclick   = ()=>{ currentTab='club'; refresh(); };
-
-      // initial render
-      refresh();
-      return { container, refresh };
+    // Initial render
+    async function refresh(){
+      const stats = await loadStats();
+      if(currentTab === 'club') renderClub(stats, content);
+      else renderStroke(stats, content);
     }
+    strokeBtn.onclick = ()=>{ currentTab='stroke'; refresh(); };
+    clubBtn.onclick   = ()=>{ currentTab='club';   refresh(); };
 
-    btn.addEventListener('click', ()=>{
-      // stop previous timer (if any)
-      if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    // Close actions
+    sheet.querySelector('#'+closeBtnId).onclick = closeStats;
 
-      const { container, refresh } = buildContent();
-      openStatsOverlay(container);
+    // Tap-outside to close
+    overlayClickHandler = (e)=>{
+      if(e.target === ov){ closeStats(); }
+    };
+    ov.addEventListener('click', overlayClickHandler);
 
-      // periodic refresh while sheet is open
-      refresh();
-      refreshTimer = setInterval(refresh, REFRESH_MS);
-    });
+    // ESC to close
+    escHandler = (e)=>{
+      if(e.key === 'Escape'){ closeStats(); }
+    };
+    document.addEventListener('keydown', escHandler);
+
+    // Start live refresh
+    await refresh();
+    refreshTimer = setInterval(refresh, REFRESH_MS);
   }
 
-  const LiveStatsApp = {
-    init(){
-      if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', attach, { once:true });
-      else attach();
-    }
-  };
+  function closeStats(){
+    if(refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; }
+    const ov = getOverlay();
+    if(overlayClickHandler){ ov.removeEventListener('click', overlayClickHandler); overlayClickHandler = null; }
+    if(escHandler){ document.removeEventListener('keydown', escHandler); escHandler = null; }
+    closeOverlay();
+  }
 
-  window.LiveStatsApp = LiveStatsApp;
-  LiveStatsApp.init();
+  // Mount: wire up the existing "Stats" button
+  function attach(){
+    let btn = document.getElementById(BTN_ID);
+    if(!btn){
+      // Fallback: create one near the bottom if missing
+      btn = document.createElement('button');
+      btn.id = BTN_ID;
+      btn.textContent = 'Stats';
+      btn.className = 'btn';
+      document.body.appendChild(btn);
+    }
+    btn.addEventListener('click', openStats);
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', attach, { once:true });
+  else attach();
 })();
