@@ -1020,6 +1020,12 @@ function openSettings(){
 (async function init(){
 
   const d = new Date().toISOString().slice(0,10);
+  document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !overlay.classList.contains('hidden')) {
+    overlay.classList.add('hidden');
+    overlay.innerHTML = '';
+  }
+});
   document.getElementById('roundDate').value = d;
 
   document.getElementById('menuBtn').onclick = ()=> openSettings();
@@ -1131,5 +1137,6 @@ function openScorecardOverlay(round){
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 }
+
 
 
