@@ -250,22 +250,16 @@
   function pct(part, total){ if(!total) return '0%'; return Math.round((part/total)*100) + '%'; }
 
   function ensurePanel(){
-    let panel = document.getElementById(PANEL_ID);
-    if(!panel){
-      panel = document.createElement('div');
-      panel.id = PANEL_ID;
-      panel.style.display = 'none';
-      panel.style.padding = '12px';
-      panel.style.border = '1px solid #ccc';
-      panel.style.borderRadius = '8px';
-      panel.style.marginTop = '12px';
-      panel.style.background = '#fff';
-      panel.style.maxWidth = '900px';
-      panel.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
-      document.body.appendChild(panel);
-    }
-    return panel;
+  let panel = document.getElementById(PANEL_ID);
+  if(!panel){
+    panel = document.createElement('div');
+    panel.id = PANEL_ID;
+    panel.style.display = 'none';
+    document.body.appendChild(panel);
   }
+  return panel;
+}
+
 
   function kvListWithPct(obj, total){
     const ul = document.createElement('ul');
