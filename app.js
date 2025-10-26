@@ -4,6 +4,7 @@
    - auto-mark first shot of hole as tee shot
    - full PGA penalty system (multiple penalty types) with UI
    - View Scorecard with penalties and CSV export
+   - (NEW) Overlay UX: tap backdrop / ESC to close + focus trap inside sheets
 */
 
 const DB_NAME = 'golftrack-db-v1';
@@ -91,22 +92,6 @@ const CFG = getConfig();
 // --- UI helpers & elements ---
 const $ = id => document.getElementById(id);
 const overlay = $('overlay');
-// close overlay when tapping the dim backdrop
-overlay.addEventListener('click', (e) => {
-  if (e.target === overlay) {
-    overlay.classList.add('hidden');
-    overlay.innerHTML = '';
-  }
-});
-
-// close overlay with Escape
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !overlay.classList.contains('hidden')) {
-    overlay.classList.add('hidden');
-    overlay.innerHTML = '';
-  }
-});
-
 const activeRoundSection = $('activeRound');
 const roundTitle = $('roundTitle');
 const roundMeta = $('roundMeta');
@@ -114,6 +99,50 @@ const recentShots = $('recentShots');
 const quickFavorites = $('quickFavorites');
 
 let CURRENT_ROUND = null;
+
+/* =========================
+   Overlay UX Enhancements
+   ========================= */
+
+// Close overlay when tapping the dim backdrop
+overlay.addEventListener('click', (e) => {
+  if (e.target === overlay) {
+    overlay.classList.add('hidden');
+    overlay.innerHTML = '';
+  }
+});
+
+// Close overlay with Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !overlay.classList.contains('hidden')) {
+    overlay.classList.add('hidden');
+    overlay.innerHTML = '';
+  }
+});
+
+// Trap focus inside a sheet for accessibility
+function trapFocus(container) {
+  const FOCUSABLE = 'a, button, input, textarea, select, [tabindex]:not([tabindex="-1"])';
+  const nodes = () => Array.from(container.querySelectorAll(FOCUSABLE))
+    .filter(el => !el.disabled && el.offsetParent !== null);
+
+  function onKeydown(e) {
+    if (e.key !== 'Tab') return;
+    const list = nodes();
+    if (!list.length) return;
+    const first = list[0], last = list[list.length - 1];
+    if (e.shiftKey && document.activeElement === first) { last.focus(); e.preventDefault(); }
+    else if (!e.shiftKey && document.activeElement === last) { first.focus(); e.preventDefault(); }
+  }
+
+  container.addEventListener('keydown', onKeydown);
+  // Focus the first control when opened
+  setTimeout(() => { const n = nodes()[0]; if (n) n.focus(); }, 0);
+}
+
+/* =========================
+   Domain helpers & models
+   ========================= */
 
 // --- Helper functions ---
 function createHole(number, par = 4) {
@@ -405,8 +434,6 @@ async function renderRoundsList(){
   // Insert the rounds list once
   createCard.insertAdjacentElement('afterend', listRoot);
 
-  // Button already exists in HTML - no need to inject
-
   // attach handlers
   listRoot.querySelectorAll('button[data-action="open"]').forEach(b=>{
     b.onclick = async (ev)=> {
@@ -647,8 +674,6 @@ async function quickLogFromFavorite(fav){
   renderActiveRound();
 }
 
-// Quick Log function removed - Add Shot button handles this functionality
-
 // detailed shot form used by hole buttons (same as before)
 function openDetailedShotForm(round,hole){
   overlay.innerHTML = '';
@@ -699,7 +724,7 @@ function openDetailedShotForm(round,hole){
 
   form.innerHTML = `<h3>Shot — Hole ${hole.number} (Par ${par})</h3>
     ${existingShotsHTML}
-    <label class="small">Club ${isFirstShot ? `(${par <= 3 ? 'Par 3' : 'Par 4/5'} recommendations)` : ''} <div id="dclub" class="pickerGrid"></div></label>
+    <label class="small">Club ${isFirstShot ? \`(${par <= 3 ? 'Par 3' : 'Par 4/5'} recommendations)\` : ''} <div id="dclub" class="pickerGrid"></div></label>
     <label class="small">Stroke <div id="dstroke" class="pickerGrid"></div></label>
     <label class="small">Lie <div id="dlie" class="pickerGrid"></div></label>
     <label class="small">Slope <div id="dslope" class="pickerGrid"></div></label>
@@ -725,6 +750,7 @@ function openDetailedShotForm(round,hole){
       <button id="lostBall" class="btn" title="PGA: stroke-and-distance">Lost Ball (PGA)</button>
     </div>`;
   overlay.appendChild(form);
+  trapFocus(form); // <— NEW
 
   // ---------- FIX: helper to find picker buttons by visible text ----------
   function findBtnByText(containerEl, txt) {
@@ -796,10 +822,12 @@ function openDetailedShotForm(round,hole){
   
   // Auto-select and lock tee lie and flat slope for first shots only
   if(isFirstShot) {
+    // Auto-select "Tee" lie and lock it
     setTimeout(() => {
       const teeBtn = dlie.querySelector('button');
       if(teeBtn && teeBtn.textContent === 'Tee') {
         select('lie', 'Tee', teeBtn);
+        // Lock the lie selection for tee shots
         dlie.querySelectorAll('button').forEach(btn => {
           btn.style.pointerEvents = 'none';
           btn.style.opacity = '0.5';
@@ -808,10 +836,13 @@ function openDetailedShotForm(round,hole){
         teeBtn.style.opacity = '1';
       }
     }, 200);
+    
+    // Auto-select "Flat" slope and lock it
     setTimeout(() => {
       const flatBtn = dslope.querySelector('button');
       if(flatBtn && flatBtn.textContent === 'Flat') {
         select('slope', 'Flat', flatBtn);
+        // Lock the slope selection for tee shots
         dslope.querySelectorAll('button').forEach(btn => {
           btn.style.pointerEvents = 'none';
           btn.style.opacity = '0.5';
@@ -821,6 +852,7 @@ function openDetailedShotForm(round,hole){
       }
     }, 200);
   }
+  // For non-first shots, all lie and slope options are available (including Tee for penalties)
   const dout = form.querySelector('#dout');
   CFG.outcomes.forEach(o=>{ 
     const b=document.createElement('button'); 
@@ -842,9 +874,11 @@ function openDetailedShotForm(round,hole){
     if(!selection[k]) selection[k] = [];
     const index = selection[k].indexOf(v);
     if(index > -1) {
+      // Remove if already selected
       selection[k].splice(index, 1);
       btn.classList.remove('sel');
     } else {
+      // Add if not selected
       selection[k].push(v);
       btn.classList.add('sel');
     }
@@ -857,8 +891,10 @@ function openDetailedShotForm(round,hole){
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
 
+  // ensure hole.penalties exists
   hole.penalties = hole.penalties || [];
 
+  // Add penalty button handler
   form.querySelector('#addPenaltyBtn').onclick = async ()=>{
     const sel = form.querySelector('#penaltySelect').value;
     const note = form.querySelector('#penaltyNote').value||'';
@@ -873,9 +909,10 @@ function openDetailedShotForm(round,hole){
 
   form.querySelector('#lostBall').onclick = async ()=>{
     if(!CFG.pgaLostBall){
+      // still allow adding, but inform user
       if(!confirm('PGA lost-ball handling is currently disabled in Settings. Add penalty anyway?')) return;
     }
-
+    // add Lost Ball penalty type (if exists in CFG) else fallback
     const pt = (CFG.penaltyTypes || []).find(x=>x.key==='Lost Ball') || (CFG.penaltyTypes||[])[0];
     hole.penalties.push(createPenalty(pt.key, pt.strokes || 1, 'Lost ball recorded'));
     await saveRound(round);
@@ -896,11 +933,13 @@ function openDetailedShotForm(round,hole){
       selection.slope || '',
       form.querySelector('#notes').value || ''
     );
+    // auto-assign tee if first shot of hole
     hole.shots = hole.shots || [];
     if(!hole.shots.length){
       shot.isTee = true;
-      shot.lie = 'Tee';
-      shot.slope = 'Flat';
+      shot.lie = 'Tee';  // Always tee for first shot
+      shot.slope = 'Flat';  // Always flat for first shot
+      // Override any user selection for first shots
       selection.lie = 'Tee';
       selection.slope = 'Flat';
     }
@@ -909,10 +948,12 @@ function openDetailedShotForm(round,hole){
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
 
+  // ---------- FIXED EDIT/DELETE LOGIC BELOW ----------
   window.editShot = async function(shotId) {
     const shot = hole.shots.find(s => s.id === shotId);
     if (!shot) return;
 
+    // Pre-fill by matching button text
     const clubBtn  = findBtnByText(dclub,  shot.club);
     if (clubBtn) select('club', shot.club, clubBtn);
     
@@ -925,6 +966,7 @@ function openDetailedShotForm(round,hole){
     const slopeBtn = findBtnByText(dslope, shot.slope);
     if (slopeBtn) select('slope', shot.slope, slopeBtn);
 
+    // Outcome may be comma-separated
     const outcomes = Array.isArray(shot.outcome)
       ? shot.outcome
       : String(shot.outcome || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -934,7 +976,8 @@ function openDetailedShotForm(round,hole){
     });
     
     form.querySelector('#notes').value = shot.notes || '';
-
+    
+    // Change save button to update mode
     const saveBtn = form.querySelector('#save');
     saveBtn.textContent = 'Update Shot';
     saveBtn.onclick = async () => {
@@ -962,8 +1005,10 @@ function openDetailedShotForm(round,hole){
     await saveRound(round);
     overlay.classList.add('hidden'); overlay.innerHTML=''; renderActiveRound();
   };
+  // ---------- END FIXED EDIT/DELETE LOGIC ----------
 }
 
+// settings UI
 function openSettings(){
   overlay.innerHTML = ''; overlay.classList.remove('hidden');
   const cfg = getConfig();
@@ -1002,8 +1047,10 @@ function openSettings(){
       <button id="closeCfg" class="btn">Close</button>
     </div>`;
   overlay.appendChild(form);
-  form.querySelector('#closeCfg').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
+  trapFocus(form); // <— NEW
 
+  form.querySelector('#closeCfg').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
+  // init checkbox
   form.querySelector('#pgaLostChk').checked = !!cfg.pgaLostBall;
 
   form.querySelector('#saveCfg').onclick = ()=> {
@@ -1015,7 +1062,7 @@ function openSettings(){
       const parts = line.split('|').map(p=>p.trim());
       return { label: parts[0]||`${parts[1]||''} ${parts[2]||''}`, club: parts[1]||'', outcome: parts[2]||'', lie: parts[3]||'', stroke: parts[4]||'' };
     });
-
+    // parse penalty types textarea
     const penLines = form.querySelector('#penText').value.split('\n').map(l=>l.trim()).filter(Boolean);
     const penaltyTypes = penLines.map(line=>{
       const parts = line.split('|').map(p=>p.trim());
@@ -1033,19 +1080,16 @@ function openSettings(){
   };
 }
 
+// init
 (async function init(){
-
+  // set default date field to today
   const d = new Date().toISOString().slice(0,10);
-  document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !overlay.classList.contains('hidden')) {
-    overlay.classList.add('hidden');
-    overlay.innerHTML = '';
-  }
-});
   document.getElementById('roundDate').value = d;
 
+  // attach main listeners
   document.getElementById('menuBtn').onclick = ()=> openSettings();
 
+  // register service worker
   if('serviceWorker' in navigator){
     try{
       await navigator.serviceWorker.register('./sw.js');
@@ -1059,84 +1103,68 @@ function openSettings(){
   renderActiveRound();
 })();
 
+// ----------------- Scorecard overlay & helpers -----------------
 function openScorecardOverlay(round){
   if(!round) return alert('No active round');
-  overlay.innerHTML = '';
-  overlay.classList.remove('hidden');
-
+  overlay.innerHTML = ''; overlay.classList.remove('hidden');
   const totals = computeRoundTotals(round);
-  const div = document.createElement('div');
-  div.className = 'form';
+  const div = document.createElement('div'); div.className='form';
+  // Calculate statistics
+  let firCount = 0, girCount = 0, twoPuttCount = 0;
+  (round.holes || []).forEach(h => {
+    if(computeFIR(h)) firCount++;
+    if(computeGIR(h)) girCount++;
+    if(compute2Putt(h)) twoPuttCount++;
+  });
 
-  let html = `
-    <h3>Scorecard — ${round.course} (${round.date})</h3>
+  let html = `<h3>Scorecard — ${round.course} (${round.date})</h3>
     <div class="muted small">Total: ${totals.totalStrokes} • Par ${totals.totalPar} • ${totals.diff>0? '+'+totals.diff : (totals.diff<0? totals.diff : 'E')}</div>
-    <div class="muted small">FIR: ${
-      round.holes.filter(computeFIR).length
-    }/${round.holes.length} • GIR: ${
-      round.holes.filter(computeGIR).length
-    }/${round.holes.length} • 2-Putts: ${
-      round.holes.filter(compute2Putt).length
-    }</div>
+    <div class="muted small">FIR: ${firCount}/${round.holes.length} • GIR: ${girCount}/${round.holes.length} • 2-Putts: ${twoPuttCount}</div>
     <div style="height:12px"></div>
-
-    <table>
+    <table style="width:100%;border-collapse:collapse">
       <thead>
         <tr>
-          <th>Hole</th>
-          <th>Par</th>
-          <th>Strokes</th>
-          <th>Putts</th>
-          <th>FIR</th>
-          <th>GIR</th>
-          <th>2-Putt</th>
-          <th>Result</th>
+          <th style="text-align:left;padding:6px">Hole</th>
+          <th style="padding:6px">Par</th>
+          <th style="padding:6px">Strokes</th>
+          <th style="padding:6px">Putts</th>
+          <th style="padding:6px">FIR</th>
+          <th style="padding:6px">GIR</th>
+          <th style="padding:6px">2-Putt</th>
+          <th style="padding:6px">Result</th>
         </tr>
       </thead>
-      <tbody>
-  `;
-
+      <tbody>`;
   (round.holes || []).forEach(h=>{
     const strokes = computeHoleStrokes(h);
     const res = holeResult(h);
     const fir = computeFIR(h) ? '✓' : '✗';
     const gir = computeGIR(h) ? '✓' : '✗';
     const twoPutt = compute2Putt(h) ? '✓' : '✗';
-
-    html += `
-      <tr>
-        <td>${h.number}</td>
-        <td>${h.par || '-'}</td>
-        <td>${strokes}</td>
-        <td>${h.putts || 0}</td>
-        <td>${fir}</td>
-        <td>${gir}</td>
-        <td>${twoPutt}</td>
-        <td>${res}</td>
-      </tr>
-    `;
+    html += `<tr>
+      <td style="padding:6px">${h.number}</td>
+      <td style="padding:6px">${h.par||'-'}</td>
+      <td style="padding:6px">${strokes}</td>
+      <td style="padding:6px">${h.putts||0}</td>
+      <td style="padding:6px;text-align:center;color:${computeFIR(h)?'green':'red'}">${fir}</td>
+      <td style="padding:6px;text-align:center;color:${computeGIR(h)?'green':'red'}">${gir}</td>
+      <td style="padding:6px;text-align:center;color:${compute2Putt(h)?'green':'red'}">${twoPutt}</td>
+      <td style="padding:6px">${res}</td>
+    </tr>`;
   });
-
-  html += `
-      </tbody>
-    </table>
-
+  html += `</tbody></table>
     <div style="height:10px"></div>
     <div class="row gap">
       <button id="closeScorecard" class="btn">Close</button>
       <button id="exportScorecardCSV" class="btn">Export CSV</button>
-    </div>
-  `;
-
+    </div>`;
   div.innerHTML = html;
   overlay.appendChild(div);
+  trapFocus(div); // <— NEW
 
-  document.getElementById('closeScorecard').onclick = ()=>{
-    overlay.classList.add('hidden');
-    overlay.innerHTML = '';
-  };
-
-  document.getElementById('exportScorecardCSV').onclick = ()=>{
+  document.getElementById('closeScorecard').onclick = ()=> { overlay.classList.add('hidden'); overlay.innerHTML=''; };
+  document.getElementById('exportScorecardCSV').onclick = ()=> {
+    // reuse export logic but limited to this round
     const rows = [['hole','par','strokes','putts','penalties','fir','gir','2putt','result']];
     (round.holes||[]).forEach(h=>{
       const strokes = computeHoleStrokes(h);
@@ -1148,12 +1176,7 @@ function openScorecardOverlay(round){
     const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], {type:'text/csv'});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `golftrack_scorecard_${round.date}_${round.course.replace(/\s+/g,'_')}.csv`;
+    const a = document.createElement('a'); a.href = url; a.download = `golftrack_scorecard_${round.date}_${round.course.replace(/\s+/g,'_')}.csv`;
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 }
-
-
-
-
