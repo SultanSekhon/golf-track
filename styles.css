@@ -637,3 +637,7 @@ body:has(#overlay:not(.hidden)) {
   animation: fadeInUp .18s ease both;
 }
 
+@media (max-width: 390px) {
+  .pickerGrid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .pickerBtn  { font-size: 12px; }
+}
