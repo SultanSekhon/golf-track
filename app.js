@@ -163,6 +163,14 @@ function createPenalty(type, strokes = 1, note = '') {
   };
 }
 
+function askPar(holeNumber, fallback = 4){
+  const val = prompt(`Par for hole ${holeNumber}?`, String(fallback));
+  if (val === null) return fallback;                // user cancelled -> keep default
+  const n = parseInt(val, 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.max(3, Math.min(6, n));               // clamp to a sensible range
+}
+
 // --- Local course pars (user provided) ---
 const LOCAL_COURSE = {
   name: 'Local Course',
@@ -303,7 +311,8 @@ $('createRound').addEventListener('click', async ()=>{
   const course = $('course').value.trim() || 'Unknown';
   const date = $('roundDate').value || new Date().toISOString().slice(0,10);
   const r = createRound(course, date, 'all');
-  r.holes.push(createHole(1, 4));
+  const par1 = askPar(1, 4);
+  r.holes.push(createHole(1, par1));
   await saveRound(r);
   CURRENT_ROUND = r;
   renderActiveRound();
@@ -333,7 +342,11 @@ $('addHoleBtn').addEventListener('click', async ()=>{
     return alert('Maximum 18 holes reached.');
   }
   const holeNumber = (CURRENT_ROUND.holes.length || 0) + 1;
-  CURRENT_ROUND.holes.push(createHole(holeNumber, 4));
+  const prevPar = CURRENT_ROUND.holes.length
+    ? (CURRENT_ROUND.holes[CURRENT_ROUND.holes.length - 1].par || 4)
+    : 4;
+  const par = askPar(holeNumber, prevPar);
+  CURRENT_ROUND.holes.push(createHole(holeNumber, par));
   setActiveHoleIndex(CURRENT_ROUND, CURRENT_ROUND.holes.length - 1);
   CURRENT_ROUND.viewMode = 'current';
   await saveRound(CURRENT_ROUND);
@@ -1153,6 +1166,7 @@ function openScorecardOverlay(round){
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   };
 }
+
 
 
 
