@@ -1,5 +1,3 @@
-/* live-stats-app.js — Stats as an overlay bottom sheet (tap-outside + Esc to close) */
-
 (function(){
   const BTN_ID = 'showStatsBtn';
   const DB_NAME = 'golftrack-db-v1';
