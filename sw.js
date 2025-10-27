@@ -5,7 +5,7 @@ const ASSETS = [
   './index.html',
   './styles.css',
   './app.js',
-  './live-stats-app.js',
+  './stats.js',
   './manifest.json',
   './apple-touch-icon.png'
 ];
