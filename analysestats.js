@@ -1,352 +1,276 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Golf — Standard CSV Analyzer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body{font-family:system-ui, -apple-system, "Segoe UI", Roboto, Arial; padding:18px; color:#111}
+    h1{margin:0 0 8px 0}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .box{border:1px solid #e6e6e6;padding:12px;border-radius:8px;background:#fafafa;margin-top:12px}
+    table{border-collapse:collapse;width:100%;margin-top:8px}
+    th,td{padding:6px 8px;border:1px solid #efefef;text-align:left;font-size:13px}
+    .muted{color:#666;font-size:13px}
+    button{padding:8px 12px;border-radius:6px;border:1px solid #bbb;background:#fff;cursor:pointer}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+  <h1>Golf — Standard CSV Analyzer</h1>
+  <p class="muted">Drop the export CSV (shot-by-shot) that matches the standard export you uploaded. This analyzer expects columns like <code>round_id,hole,par,club,stroke,strokes,putts,shot_is_tee,fir,gir,outcome</code>.</p>
 
+  <div class="row">
+    <input id="file" type="file" accept=".csv" />
+    <button id="download-example">Download example</button>
+    <button id="export-enriched" disabled>Export enriched CSV</button>
+    <div id="status"></div>
+  </div>
+
+  <div id="diagnostics" class="box"></div>
+  <div id="summary" class="box"></div>
+  <div id="perClub" class="box"></div>
+  <div id="mistakes" class="box"></div>
 
 <script>
-/*
-  Golf CSV Analyzer (client-side)
-  - heuristically maps columns
-  - groups by round+hole and reconstructs shot sequences
-  - computes empirical strokes-gained using dataset averages by distance bins
-  - computes GIR, FIR, Scrambling, putting average
-  - aggregates per-club SG and flags problematic clubs/mistakes
-*/
+/* ---------- Helpers ---------- */
+function toNum(v){ const n=parseFloat((''+v).replace(/[,\s]+/g,'')); return isNaN(n)?null:n; }
+function pct(n, d){ if(d===0||d==null) return '-'; return Math.round((n/d)*1000)/10 + '%'; }
+function uniq(arr){ return Array.from(new Set(arr)); }
+function csvEscape(s){ if(s==null) return ''; return (''+s).replace(/"/g,'""'); }
+function download(filename, text){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type:'text/csv'})); a.download=filename; a.click(); }
 
-/* ---------- Utilities ---------- */
-function findHeader(headers, candidates) {
-  const hLower = headers.map(h => h.toLowerCase());
-  for (let c of candidates) {
-    const idx = hLower.indexOf(c.toLowerCase());
-    if (idx !== -1) return headers[idx];
-  }
-  // try contains
-  for (let c of candidates) {
-    for (let i=0;i<hLower.length;i++){
-      if (hLower[i].includes(c.toLowerCase())) return headers[i];
-    }
-  }
-  return null;
-}
-function toNum(v){ const n=parseFloat((v+'').replace(/[, ]+/g,'')); return isNaN(n)?null:n; }
-function prettyPercent(n){ return (n==null?'-':(Math.round(n*1000)/10)+'%'); }
-function mean(arr){ if(!arr || arr.length===0) return null; return arr.reduce((a,b)=>a+b,0)/arr.length; }
+/* ---------- Example CSV (small) ---------- */
+document.getElementById('download-example').addEventListener('click', ()=>{
+  const csv = `"round_id","date","course","hole","par","shot_id","club","stroke","lie","outcome","strokes","putts","shot_is_tee","fir","gir","notes"
+1,2025-10-26,"Panchula",1,4,1,"Driver",1,"Tee","Fairway",4,2,true,true,false,""
+1,2025-10-26,"Panchula",1,4,2,"5-iron",2,"Fairway","Approach",4,2,false,,true,""
+1,2025-10-26,"Panchula",1,4,3,"Putter",3,"Green","Holed",4,2,false,,,"putt holed"
+`;
+  download('example_std_round.csv', csv);
+});
 
-/* ---------- Main processing ---------- */
+/* ---------- CSV parsing + analysis ---------- */
+let lastParsed = null;
 document.getElementById('file').addEventListener('change', (e)=>{
   const f = e.target.files[0]; if(!f) return;
   document.getElementById('status').textContent = 'Parsing...';
-  Papa.parse(f, {
-    header: true, skipEmptyLines:true,
-    dynamicTyping:false,
+  Papa.parse(f, {header:true, skipEmptyLines:true, dynamicTyping:false,
     complete: function(res){
       document.getElementById('status').textContent = '';
-      analyzeCSV(res.meta.fields, res.data);
+      analyzeStandardCSV(res.meta.fields, res.data);
+      lastParsed = {fields: res.meta.fields, data: res.data};
+      document.getElementById('export-enriched').disabled = false;
     }
   });
 });
 
-document.getElementById('example').addEventListener('click', ()=>{
-  const csv = `round_id,hole,par,shot_number,club,from_surface,dist_to_hole_before_m,dist_to_hole_after_m,shot_result,fairway_hit,putts_for_hole
-1,1,4,1,Driver,Tee,280,200,fairway,true,
-1,1,4,2,5-iron,Fairway,200,30,approach,false,
-1,1,4,3,Putter,Green,30,0,holed,false,2
-1,2,3,1,8-iron,Tee,120,12,green,,,
-1,2,3,2,Putter,Green,12,0,holed,, ,1
-`;
-  const blob = new Blob([csv], {type:'text/csv'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href=url; a.download='example_shots.csv'; a.click();
-});
+/* ---------- main analyzer tuned to your CSV columns ---------- */
+function analyzeStandardCSV(headers, rows){
+  const wanted = {
+    round_id: headers.includes('round_id') ? 'round_id': null,
+    hole: headers.includes('hole') ? 'hole' : null,
+    par: headers.includes('par') ? 'par' : null,
+    club: headers.includes('club') ? 'club' : null,
+    stroke: headers.includes('stroke') ? 'stroke' : null,
+    strokes: headers.includes('strokes') ? 'strokes' : null, // hole total
+    putts: headers.includes('putts') ? 'putts' : null,
+    shot_is_tee: headers.includes('shot_is_tee') ? 'shot_is_tee' : null,
+    fir: headers.includes('fir') ? 'fir' : null,
+    gir: headers.includes('gir') ? 'gir' : null,
+    outcome: headers.includes('outcome') ? 'outcome' : null,
+    lie: headers.includes('lie') ? 'lie' : null,
+    penalties: headers.includes('penalties') ? 'penalties' : null
+  };
 
-async function analyzeCSV(headers, rows){
-  // Map headers heuristically
-  const headerList = headers;
-  const map = {};
-  map.round = findHeader(headerList, ['round','round_id','game','session']) || null;
-  map.hole = findHeader(headerList, ['hole','hole_number','hole_no']) || null;
-  map.par = findHeader(headerList, ['par','hole_par']) || null;
-  map.shotNumber = findHeader(headerList, ['shot_number','shotno','shot']) || null;
-  map.club = findHeader(headerList, ['club','club_name','club_used']) || null;
-  map.distBefore = findHeader(headerList, ['dist_to_hole_before','distance_to_hole_before','dist_before','distance_before','dist_to_pin','distance_to_pin','to_hole']) || null;
-  map.distAfter = findHeader(headerList, ['dist_to_hole_after','distance_to_hole_after','dist_after','distance_after','left_to_hole','left_distance']) || null;
-  map.shotResult = findHeader(headerList, ['shot_result','result','surface','outcome','target']) || null;
-  map.fairway = findHeader(headerList, ['fairway','fir','fairway_hit']) || null;
-  map.greenHit = findHeader(headerList, ['gir','green','green_hit','green_in_regulation']) || null;
-  map.putts = findHeader(headerList, ['putts','putts_for_hole','putts_on_hole','num_putts']) || null;
-  map.holedFlag = findHeader(headerList, ['holed','in_hole','is_hole','is_holed']) || null;
-  // put a diagnostics box
-  const diag = document.getElementById('diagnostics');
-  diag.innerHTML = `<strong>Detected columns (heuristic):</strong><pre>${JSON.stringify(map, null, 2)}</pre>
-    <small>Note: if important columns are missing (distances, shot ordering, club), results will be approximate.</small>`;
+  document.getElementById('diagnostics').innerHTML = `<strong>Mapped columns</strong>
+    <pre>${JSON.stringify(wanted,null,2)}</pre>
+    <p class="muted">If any of the main columns are missing (club, strokes, putts, outcome) results will be approximate.</p>`;
 
-  // normalize rows: attach parsed values
+  // Normalize rows
   const data = rows.map((r, idx) => {
     return {
-      __rowIndex: idx,
+      __idx: idx,
       raw: r,
-      round: map.round ? r[map.round] : '1',
-      hole: map.hole ? (r[map.hole] || '') : '',
-      par: map.par ? toNum(r[map.par]) : null,
-      shotNumber: map.shotNumber ? toNum(r[map.shotNumber]) : null,
-      club: map.club ? (r[map.club]||'Unknown') : 'Unknown',
-      distBefore: map.distBefore ? toNum(r[map.distBefore]) : null,
-      distAfter: map.distAfter ? toNum(r[map.distAfter]) : null,
-      shotResult: map.shotResult ? (''+ (r[map.shotResult]||'')).toLowerCase() : '',
-      fairway: map.fairway ? (''+ (r[map.fairway]||'')).toLowerCase() : null,
-      greenHit: map.greenHit ? (''+ (r[map.greenHit]||'')).toLowerCase() : null,
-      putts_for_hole: map.putts ? toNum(r[map.putts]) : null,
-      holedFlag: map.holedFlag ? (''+ (r[map.holedFlag]||'')).toLowerCase() : null
+      round_id: wanted.round_id ? r[wanted.round_id] : '1',
+      hole: wanted.hole ? r[wanted.hole] : null,
+      par: wanted.par ? toNum(r[wanted.par]) : null,
+      club: wanted.club ? (r[wanted.club]||'Unknown') : 'Unknown',
+      stroke: wanted.stroke ? toNum(r[wanted.stroke]) : null,
+      strokes: wanted.strokes ? toNum(r[wanted.strokes]) : null,
+      putts: wanted.putts ? toNum(r[wanted.putts]) : null,
+      shot_is_tee: wanted.shot_is_tee ? (''+r[wanted.shot_is_tee]).toLowerCase() : null,
+      fir: wanted.fir ? (''+r[wanted.fir]).toLowerCase() : null,
+      gir: wanted.gir ? (''+r[wanted.gir]).toLowerCase() : null,
+      outcome: wanted.outcome ? (''+r[wanted.outcome]).toLowerCase() : '',
+      lie: wanted.lie ? (''+r[wanted.lie]).toLowerCase() : '',
+      penalties: wanted.penalties ? toNum(r[wanted.penalties]) : 0
     };
   });
 
   // Group by round+hole
-  const groups = {};
-  for (let r of data) {
-    const key = `${r.round}||${r.hole}`;
-    if (!groups[key]) groups[key] = {round:r.round, hole:r.hole, par:r.par, shots:[]};
-    groups[key].shots.push(r);
+  const holesMap = {};
+  for (let s of data){
+    const key = `${s.round_id}||${s.hole}`;
+    if (!holesMap[key]) holesMap[key] = {round_id: s.round_id, hole: s.hole, par: s.par, shots: []};
+    holesMap[key].shots.push(s);
   }
-  // sort shots within hole by shotNumber if available else by original order
-  for (let k in groups) {
-    groups[k].shots.sort((a,b)=>{
-      if (a.shotNumber!=null && b.shotNumber!=null) return a.shotNumber - b.shotNumber;
-      return a.__rowIndex - b.__rowIndex;
-    });
-  }
+  // compute overall totals
+  const holes = Object.values(holesMap);
+  let totalStrokes = 0, totalHoles=0, totalPutts=0, totalFirAttempts=0, totalFirHits=0, totalGirAttempts=0, totalGirHits=0;
+  let scrambleAttempts=0, scrambleSuccess=0;
+  const clubAgg = {}; // club -> stats
+  const mistakeCounts = {left:0,right:0,short:0,long:0,bunker:0,penalty:0,other:0};
 
-  // For each shot compute observed strokes left after that shot (in that hole) = number of shots remaining in that hole
-  const allShots = [];
-  for (let k in groups) {
-    const hole = groups[k];
-    const n = hole.shots.length;
-    for (let i=0;i<n;i++){
-      const shot = hole.shots[i];
-      shot.inHoleIndex = i;
-      shot.shotsRemaining_after = n - 1 - i; // shots still to be played in that hole after this shot
-      // if any later shot has holed flag or distAfter==0, we can set holed position; but shotsRemaining_after already reflects real outcome.
-      allShots.push(shot);
-    }
-  }
-
-  // Build empirical expectation table: for distance-before bins, average strokesRemaining_before
-  // We'll use bins: 0-3,3-8,8-15,15-30,30-50,50-80,80-120,120-150,150-200,200-300,300+
-  const bins = [0,3,8,15,30,50,80,120,150,200,300,10000];
-  function binLabel(d){
-    if (d==null) return 'unknown';
-    for (let i=0;i<bins.length-1;i++){
-      if (d >= bins[i] && d < bins[i+1]) return `${bins[i]}-${bins[i+1]-1}`;
-    }
-    return `${bins[bins.length-2]}+`;
-  }
-  const statsByBin = {}; // for distBefore
-  for (let s of allShots){
-    const d = s.distBefore;
-    const label = binLabel(d);
-    if (!statsByBin[label]) statsByBin[label] = {samples:0, sumAfter:0, afters:[]};
-    // strokesRemaining after this shot is observed. That is our empirical "strokes to hole after this shot".
-    statsByBin[label].samples++;
-    statsByBin[label].sumAfter += s.shotsRemaining_after;
-    statsByBin[label].afters.push(s.shotsRemaining_after);
-  }
-  // compute avg strokesRemaining_by_bin
-  for (let b in statsByBin) {
-    statsByBin[b].avgAfter = statsByBin[b].sumAfter / statsByBin[b].samples;
-  }
-
-  // Now compute strokes-gained per shot: expected_before - (1 + expected_after)
-  // expected_before = avgAfter for bin of distBefore
-  // expected_after = avgAfter for bin of distAfter  (if distAfter missing, try to use 0 if holed or fallback to same)
-  for (let s of allShots){
-    const beforeLabel = binLabel(s.distBefore);
-    const afterLabel = binLabel(s.distAfter);
-    const expBefore = statsByBin[beforeLabel] ? statsByBin[beforeLabel].avgAfter : null;
-    // expected after: if distAfter is 0 or we see holed, expected_after = 0
-    let expAfter = null;
-    if (s.distAfter === 0 || (s.shotResult && s.shotResult.includes('hole')) || (s.holedFlag && s.holedFlag.includes('true'))) expAfter = 0;
-    else expAfter = statsByBin[afterLabel] ? statsByBin[afterLabel].avgAfter : null;
-    if (expBefore==null || expAfter==null) {
-      s.sg = null;
-    } else {
-      // SG = expected_before - (1 + expected_after)
-      s.sg = expBefore - (1 + expAfter);
-    }
-  }
-
-  // Aggregate metrics
-  const holes = Object.values(groups);
-  const holesPlayed = holes.length;
-  let totalStrokes = 0;
-  let totalPutts = 0;
-  let firAttempts = 0, firHits = 0;
-  let girCount = 0, girAttempts = 0;
-  let scrambleAttempts = 0, scrambleSuccess = 0;
-  const clubAgg = {}; // club -> {shots, sumSG, sgSamples, shortCount, longCount, leftCount, rightCount, poorCount}
   for (let h of holes){
-    // Count strokes for this hole = shots length
-    totalStrokes += h.shots.length;
-    // putts_for_hole might be present only on first shot row or on hole-level; try to find any putts value
-    const puttVal = h.shots.find(s=>s.putts_for_hole!=null && !isNaN(s.putts_for_hole));
-    if (puttVal) totalPutts += puttVal.putts_for_hole;
+    if (!h.shots.length) continue;
+    totalHoles++;
+    // hole strokes: try to use 'strokes' column from first shot of hole if present (export puts hole-level on every shot)
+    const holeStrokes = h.shots.find(s=>s.strokes!=null && !isNaN(s.strokes))?.strokes;
+    if (holeStrokes!=null) totalStrokes += holeStrokes;
+    else totalStrokes += h.shots.length; // fallback
+    // putts: try to find putts entry on any row
+    const holePutts = h.shots.find(s=>s.putts!=null && !isNaN(s.putts))?.putts;
+    if (holePutts!=null) totalPutts += holePutts;
     else {
-      // fallback: count shots with from_surface 'green' and shotResult holed? approximate putts as shots with "putter" club on green
-      const putterShots = h.shots.filter(s => (''+s.club).toLowerCase().includes('putt') || (s.shotResult && s.shotResult.includes('putt')));
-      totalPutts += putterShots.length;
+      // fallback count of club containing 'putt'
+      totalPutts += h.shots.filter(s => s.club && s.club.toLowerCase().includes('putt')).length;
     }
 
-    // FIR: detect tee shot = shot index 0; only count for par 4 & par 5 holes
+    // FIR/GIR flags often present on tee or hole-level
+    const teeShot = h.shots[0];
     if (h.par && (h.par==4 || h.par==5)) {
-      const teeShot = h.shots[0];
-      if (teeShot) {
-        firAttempts++;
-        let hit = false;
-        if (teeShot.fairway!=null) {
-          const f = (''+teeShot.fairway).toLowerCase();
-          if (f==='true' || f==='1' || f.includes('y') || f.includes('hit') || f.includes('fairway')) hit=true;
-        }
-        if (teeShot.shotResult && teeShot.shotResult.includes('fair')) hit = true;
-        if (hit) firHits++;
-      }
+      totalFirAttempts++;
+      if (teeShot && teeShot.fir && (teeShot.fir.includes('true') || teeShot.fir==='1' || teeShot.fir.includes('y'))) totalFirHits++;
     }
 
-    // GIR: simple heuristic: did a shot reach the green in regulation?
-    // We'll mark hole GIR true if any shot in hole has shotResult containing 'green' and that shot's index <= par-2 (i.e., on/within regulation)
+    // GIR: check any shot in hole has gir true (or shots include 'green' outcome) on approach and par is present
     let holeGir = false;
-    for (let s of h.shots) {
-      if (s.shotResult && s.shotResult.includes('green')){
-        // determine shot index: if shotNumber available use it, else inHoleIndex+1
-        const sn = s.shotNumber!=null? s.shotNumber : (s.inHoleIndex+1);
-        if (h.par!=null && sn <= (h.par - 1)) { // reaching green in par-1 or earlier
-          holeGir = true; break;
-        }
-      }
-      // if distAfter === 0 and inHoleIndex+1 <= par-1, that's a GIR (hole out on approach)
-      if (s.distAfter === 0) {
-        const sn = s.shotNumber!=null? s.shotNumber : (s.inHoleIndex+1);
-        if (h.par!=null && sn <= (h.par - 1)) { holeGir = true; break; }
-      }
+    for (let s of h.shots){
+      if (s.gir && (s.gir.includes('true') || s.gir==='1' || s.gir.includes('y'))) { holeGir = true; break; }
+      if (s.outcome && s.outcome.includes('green')) { holeGir = true; break; }
     }
+    if (h.par!=null) { totalGirAttempts++; if (holeGir) totalGirHits++; }
+
+    // Scrambling: if missed GIR and hole score <= par => scramble success
     if (h.par!=null) {
-      girAttempts++;
-      if (holeGir) girCount++;
+      const strokesForHole = holeStrokes!=null ? holeStrokes : h.shots.length;
+      if (!holeGir) { scrambleAttempts++; if (strokesForHole <= h.par) scrambleSuccess++; }
     }
 
-    // Scrambling: if not GIR and hole strokes <= par (par saved or better)
-    let holeScore = h.shots.length;
-    if (!holeGir && h.par!=null) {
-      scrambleAttempts++;
-      if (holeScore <= h.par) scrambleSuccess++;
-    }
-
-    // Club aggregates & mistake detection
-    for (let s of h.shots) {
+    // per-shot & per-club aggregates; also compute mistakes by scanning outcome text, lie, penalties
+    for (let s of h.shots){
       const club = s.club || 'Unknown';
-      if (!clubAgg[club]) clubAgg[club] = {shots:0, sumSG:0, sgSamples:0, short:0, long:0, left:0, right:0, neutral:0, rawShots:[]};
-      const a = clubAgg[club];
-      a.shots++;
-      a.rawShots.push(s);
-      if (s.sg!=null) { a.sumSG += s.sg; a.sgSamples++; }
-      // Basic mistake heuristics:
-      // - if distAfter is null or distBefore is null we can't do much
-      if (s.distBefore!=null && s.distAfter!=null) {
-        const delta = s.distBefore - s.distAfter; // positive means you reduced distance
-        if (delta < 0) a.long++;
-        else if (delta < (s.distBefore * 0.15) && s.distBefore > 30) a.neutral++;
-        else a.short += (delta>0 && delta < 5) ? 1 : 0; // tiny reduction = short
-      }
-      // left/right detection requires lateral info -> we look for columns like 'left_right' or shotResult includes left/right
-      if (s.shotResult) {
-        if (s.shotResult.includes('left')) a.left++;
-        if (s.shotResult.includes('right')) a.right++;
-      }
+      if (!clubAgg[club]) clubAgg[club] = {shots:0, holesWithClub:new Set(), outcomes:{}, avgHoleStrokesWhenUsed:[], penalties:0};
+      const C = clubAgg[club];
+      C.shots++;
+      C.holesWithClub.add(`${h.round_id}||${h.hole}`);
+      // add hole score to list (to compute avg hole score when this club used)
+      C.avgHoleStrokesWhenUsed.push(holeStrokes!=null ? holeStrokes : h.shots.length);
+      if (s.penalties) C.penalties += s.penalties;
+      // outcome breakdown tokenization
+      const out = s.outcome || '';
+      if (!C.outcomes[out]) C.outcomes[out]=0; C.outcomes[out]++;
+
+      // detect mistakes from outcome & lie & penalties
+      if (out.includes('left')) mistakeCounts.left++;
+      else if (out.includes('right')) mistakeCounts.right++;
+      else if (out.includes('short')) mistakeCounts.short++;
+      else if (out.includes('long')) mistakeCounts.long++;
+      if (out.includes('bunker') || s.lie && s.lie.includes('bunker')) mistakeCounts.bunker++;
+      if (s.penalties && s.penalties>0) mistakeCounts.penalty++;
+      if (!out.includes('left') && !out.includes('right') && !out.includes('short') && !out.includes('long') && !(out.includes('bunker')|| (s.lie && s.lie.includes('bunker'))) && !(s.penalties>0)) mistakeCounts.other++;
     }
   }
 
-  // Summary numbers
-  const scoringAvg = (holesPlayed>0) ? (totalStrokes / holesPlayed) : null;
-  const puttingAvg = (holesPlayed>0) ? (totalPutts / holesPlayed) : null;
-  const firPct = (firAttempts>0) ? (firHits / firAttempts) : null;
-  const girPct = (girAttempts>0) ? (girCount / girAttempts) : null;
-  const scramblePct = (scrambleAttempts>0) ? (scrambleSuccess / scrambleAttempts) : null;
+  // compute summary metrics
+  const scoringAvg = totalHoles ? (totalStrokes / totalHoles) : null;
+  const puttingAvg = totalHoles ? (totalPutts / totalHoles) : null;
+  const firPct = totalFirAttempts ? (totalFirHits / totalFirAttempts) : null;
+  const girPct = totalGirAttempts ? (totalGirHits / totalGirAttempts) : null;
+  const scramblePct = (scrambleAttempts? (scrambleSuccess / scrambleAttempts) : null);
 
-  // Per-club sort by average SG ascending (worst first)
-  const clubList = Object.keys(clubAgg).map(c=>{
-    const o = clubAgg[c];
+  // club list with aggregated numbers
+  const clubList = Object.keys(clubAgg).map(club => {
+    const o = clubAgg[club];
     return {
-      club: c,
+      club,
       shots: o.shots,
-      avgSG: (o.sgSamples>0) ? (o.sumSG / o.sgSamples) : null,
-      sgSamples: o.sgSamples,
-      short: o.short, long: o.long, left: o.left, right: o.right, neutral: o.neutral
+      holes: o.holesWithClub.size,
+      avgHoleStrokes: Math.round((o.avgHoleStrokesWhenUsed.reduce((a,b)=>a+b,0)/o.avgHoleStrokesWhenUsed.length)*100)/100,
+      penalties: o.penalties,
+      topOutcomes: Object.entries(o.outcomes).sort((a,b)=>b[1]-a[1]).slice(0,5)
     };
-  }).sort((a,b)=>{
-    if (a.avgSG==null && b.avgSG==null) return b.shots - a.shots;
-    if (a.avgSG==null) return 1;
-    if (b.avgSG==null) return -1;
-    return a.avgSG - b.avgSG; // worst (most negative) first
-  });
+  }).sort((a,b)=>b.shots - a.shots);
 
-  // Determine "most problematic" clubs — ones with lowest avgSG and reasonable sample count
-  const problematic = clubList.filter(c => c.avgSG!=null && c.shots>=5).slice(0,5);
+  // identify problematic clubs: highest avgHoleStrokes & many shots (proxy for costly clubs)
+  const problematic = clubList.filter(c=>c.shots>=5).sort((a,b)=>b.avgHoleStrokes - a.avgHoleStrokes).slice(0,6);
 
-  // Most common mistakes overall: examine clubAgg raw counts
-  const mistakeTotals = {short:0,long:0,left:0,right:0,neutral:0};
-  for (let c of clubList) {
-    mistakeTotals.short += c.short;
-    mistakeTotals.long += c.long;
-    mistakeTotals.left += c.left;
-    mistakeTotals.right += c.right;
-    mistakeTotals.neutral += c.neutral;
-  }
-  // pick top mistake
-  const mistakeRank = Object.entries(mistakeTotals).sort((a,b)=>b[1]-a[1]);
-  const topMistake = mistakeRank[0] && mistakeRank[0][1]>0 ? mistakeRank[0][0] : 'unknown';
+  // top mistake type
+  const mistakeRank = Object.entries(mistakeCounts).sort((a,b)=>b[1]-a[1]);
+  const topMistake = mistakeRank.length? mistakeRank[0][0] : 'none';
 
-  // Build outputs
-  const summary = document.getElementById('summary');
-  summary.innerHTML = `<strong>Summary (${holesPlayed} holes, ${allShots.length} shots)</strong>
+  // render summary
+  document.getElementById('summary').innerHTML = `<strong>Round summary</strong>
     <table>
-      <tr><th>Strokes total</th><td>${totalStrokes}</td></tr>
-      <tr><th>Scoring average (strokes/hole)</th><td>${scoringAvg? (Math.round(scoringAvg*100)/100) : '-'}</td></tr>
-      <tr><th>Putting average (putts/hole)</th><td>${puttingAvg? (Math.round(puttingAvg*100)/100) : '-'}</td></tr>
-      <tr><th>FIR % (par4/5 only)</th><td>${firPct!=null? prettyPercent(firPct): '-'}</td></tr>
-      <tr><th>GIR %</th><td>${girPct!=null? prettyPercent(girPct): '-'}</td></tr>
-      <tr><th>Scrambling % (when missed GIR)</th><td>${scramblePct!=null? prettyPercent(scramblePct): '-'}</td></tr>
-      <tr><th>Average empirical SG per shot (dataset mean)</th><td>${(function(){ const s = allShots.filter(x=>x.sg!=null).map(x=>x.sg); return s.length? (Math.round((s.reduce((a,b)=>a+b,0)/s.length)*100)/100) : 'insufficient data' })()}</td></tr>
+      <tr><th>Holes</th><td>${totalHoles}</td></tr>
+      <tr><th>Total strokes</th><td>${totalStrokes}</td></tr>
+      <tr><th>Scoring avg (strokes/hole)</th><td>${scoringAvg? Math.round(scoringAvg*100)/100 : '-'}</td></tr>
+      <tr><th>Putting avg (putts/hole)</th><td>${puttingAvg? Math.round(puttingAvg*100)/100 : '-'}</td></tr>
+      <tr><th>FIR % (par4/5)</th><td>${firPct!=null? pct(totalFirHits, totalFirAttempts) : '-'}</td></tr>
+      <tr><th>GIR %</th><td>${girPct!=null? pct(totalGirHits, totalGirAttempts) : '-'}</td></tr>
+      <tr><th>Scrambling % (when missed GIR)</th><td>${scramblePct!=null? Math.round(scramblePct*1000)/10+'%' : '-'}</td></tr>
     </table>
-    <p><strong>Top problematic clubs (by avg strokes-gained, worst first; min 5 shots):</strong></p>
-    ${problematic.length? `<ol>${problematic.map(p=>`<li>${p.club} — avg SG ${(Math.round(p.avgSG*100)/100)} over ${p.shots} shots</li>`).join('')}</ol>` : '<em>Not enough data or no club with >=5 shots.</em>'}
-    <p><strong>Most common mistake type overall (heuristic):</strong> ${topMistake}</p>
-    <p><small><strong>Notes & assumptions:</strong> This tool uses only data available in your CSV. It builds an <em>empirical</em> expected strokes table by distance bins from your dataset and computes strokes gained as: <code>SG = expected_before - (1 + expected_after)</code>. This is a dataset-driven approximation — if your file has few samples for a distance, SG may be noisy. Columns that help accuracy: <em>dist_to_hole_before, dist_to_hole_after, club, shot_number, shot_result</em>. If those are missing the results will be approximate.</small></p>
+    <p class="muted"><strong>Important:</strong> No distance columns present → true strokes-gained requires distance/lie baseline. This analysis uses hole-level proxies and outcome text to flag problems.</p>
   `;
 
-  // Per-club table
-  const perClubDiv = document.getElementById('perClub');
-  perClubDiv.innerHTML = `<strong>Per-club summary (top 30)</strong>
-    <table><thead><tr><th>Club</th><th>Shots</th><th>Avg SG</th><th>SG samples</th><th>Short</th><th>Long</th><th>Left</th><th>Right</th></tr></thead>
+  // per-club table
+  document.getElementById('perClub').innerHTML = `<strong>Per-club summary (top 30)</strong>
+    <table><thead><tr><th>Club</th><th>Shots</th><th>Holes used</th><th>Avg hole strokes when used</th><th>Penalties</th><th>Top outcomes</th></tr></thead>
     <tbody>
       ${clubList.slice(0,30).map(c=>`<tr>
         <td>${c.club}</td>
         <td>${c.shots}</td>
-        <td>${c.avgSG!=null? (Math.round(c.avgSG*100)/100) : '-'}</td>
-        <td>${c.sgSamples}</td>
-        <td>${c.short}</td><td>${c.long}</td><td>${c.left}</td><td>${c.right}</td>
+        <td>${c.holes}</td>
+        <td>${c.avgHoleStrokes}</td>
+        <td>${c.penalties}</td>
+        <td>${c.topOutcomes.map(t=>`${t[0]} (${t[1]})`).join(', ')}</td>
       </tr>`).join('')}
     </tbody></table>`;
 
 
-  // Mistakes breakdown
-  const mistakesDiv = document.getElementById('mistakes');
-  mistakesDiv.innerHTML = `<strong>Mistakes summary</strong>
-    <p>Counts (heuristic): short: ${mistakeTotals.short}, long: ${mistakeTotals.long}, left: ${mistakeTotals.left}, right: ${mistakeTotals.right}</p>
-    <p><strong>Distance-bin stats (samples → avg shots remaining after a shot)</strong></p>
-    <table><thead><tr><th>Bin (m)</th><th>Samples</th><th>Avg strokes remaining after shot</th></tr></thead>
-    <tbody>
-      ${Object.entries(statsByBin).map(([b,v])=>`<tr><td>${b}</td><td>${v.samples}</td><td>${v.avgAfter? (Math.round(v.avgAfter*100)/100) : '-'}</td></tr>`).join('')}
-    </tbody></table>
-    <p><em>If you'd like, I can:</em></p>
-    <ul>
-      <li>Export a per-shot CSV with computed SG values and flags</li>
-      <li>Produce a chart of club SG over time</li>
-      <li>Use a known strokes-gained model (requires external baseline table)</li>
-    </ul>
+  // mistakes summary
+  document.getElementById('mistakes').innerHTML = `<strong>Mistakes & problems</strong>
+    <p>Top mistake type (heuristic): <strong>${topMistake}</strong></p>
+    <p>Counts: ${Object.entries(mistakeCounts).map(kv=>`${kv[0]}: ${kv[1]}`).join(' • ')}</p>
+    <p><strong>Most problematic clubs (proxy — avg hole strokes when used, min 5 shots):</strong></p>
+    ${problematic.length? `<ol>${problematic.map(p=>`<li>${p.club} — avg hole strokes ${p.avgHoleStrokes} over ${p.shots} shots</li>`).join('')}</ol>` : '<em>No club reached 5 shots or insufficient data.</em>'}
+    <p style="margin-top:8px"><em>Want a CSV export that flags shots with the detected mistake tags? Click Export enriched CSV.</em></p>
   `;
+
+  // save enriched data for export
+  window._enriched = data.map(s=>{
+    // create outcome tags array
+    const tags = [];
+    if (s.outcome.includes('left')) tags.push('left');
+    if (s.outcome.includes('right')) tags.push('right');
+    if (s.outcome.includes('short')) tags.push('short');
+    if (s.outcome.includes('long')) tags.push('long');
+    if (s.outcome.includes('bunker') || (s.lie && s.lie.includes('bunker'))) tags.push('bunker');
+    if (s.penalties && s.penalties>0) tags.push('penalty');
+    const problematicFlag = (tags.length>0) ? 'yes' : 'no';
+    return Object.assign({}, s.raw, {analysis_outcomeTags: tags.join('|'), analysis_problematic: problematicFlag});
+  });
 }
+
+/* ---------- Export enriched CSV ---------- */
+document.getElementById('export-enriched').addEventListener('click', ()=>{
+  if (!window._enriched || !window._enriched.length) return alert('No parsed data yet.');
+  const rows = window._enriched;
+  const fields = Object.keys(rows[0]);
+  const csv = [fields.map(f=>`"${f}"`).join(',')].concat(rows.map(r=> fields.map(f=> `"${csvEscape(r[f])}"`).join(',')).join('\n'));
+  download('enriched_round.csv', csv.join('\n'));
+});
 </script>
+</body>
+</html>
